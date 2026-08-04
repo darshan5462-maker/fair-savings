@@ -76,11 +76,26 @@ managed PostgreSQL gives you the same kind of connection string.)
    frontend will call `<that-url>/api`.
 
 ### Seed the demo admin + demo family
-On your Render service page, open the **Shell** tab and run:
-```
-npm run prisma:seed
-```
-This creates the admin login and the demo Mahadev/Darshan/Bhavya/Omkar family.
+Render's free tier doesn't include shell access, so seed over HTTP instead:
+
+1. On your Render service → **Environment**, add one more variable:
+   | Key | Value |
+   |---|---|
+   | `SEED_SECRET` | any random string, e.g. `seedme123xyz` |
+2. Save — Render redeploys.
+3. Visit this URL in your browser once (swap in your own domain and secret):
+   ```
+   https://fair-savings-backend.onrender.com/api/dev/seed?secret=seedme123xyz
+   ```
+   You should get back a JSON response confirming the admin and demo family
+   were created. It's safe to visit more than once — it won't duplicate data.
+4. **Afterward, delete the `SEED_SECRET` variable** on Render (or change it to
+   something else) so the endpoint stops responding — it's meant as a one-time
+   setup step, not a permanent open route.
+
+> **Note:** this same seeding logic also runs locally via `npm run prisma:seed`
+> if you ever do have shell/terminal access to the backend (e.g. testing on
+> your own machine, or a future paid Render plan).
 
 > **Free tier note:** Render's free web services spin down after 15 minutes of
 > inactivity and take ~30–60 seconds to wake up on the next request. That's

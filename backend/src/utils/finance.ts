@@ -1,0 +1,52 @@
+/**
+ * Core financial calculations for Fair Savings.
+ * Kept framework-agnostic and pure so they're easy to unit test.
+ */
+
+export interface LoanTerms {
+  principalAmount: number;
+  interestRate: number; // percent, e.g. 10 for 10%
+  durationWeeks: number;
+}
+
+export interface LoanComputed {
+  totalRepayment: number;
+  weeklyEmi: number;
+  remainingAmount: number;
+  remainingWeeks: number;
+}
+
+/** Simple interest loan: totalRepayment = principal * (1 + rate/100) */
+export function computeLoan({ principalAmount, interestRate, durationWeeks }: LoanTerms): LoanComputed {
+  const totalRepayment = round2(principalAmount * (1 + interestRate / 100));
+  const weeklyEmi = round2(totalRepayment / durationWeeks);
+  return {
+    totalRepayment,
+    weeklyEmi,
+    remainingAmount: totalRepayment,
+    remainingWeeks: durationWeeks,
+  };
+}
+
+/** Penalty is `penaltyRate`% of the missed EMI amount (default 1%). */
+export function computePenalty(emiAmount: number, penaltyRate = 1): number {
+  return round2(emiAmount * (penaltyRate / 100));
+}
+
+/**
+ * Builds a renewed loan from the unpaid balance of a completed-duration loan,
+ * applying interest again on the outstanding amount and resetting the term.
+ */
+export function computeRenewal(remainingAmount: number, interestRate: number, durationWeeks: number): LoanComputed {
+  return computeLoan({ principalAmount: remainingAmount, interestRate, durationWeeks });
+}
+
+export function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/** Progress percentage for a 52-week savings cycle (or any cycle length). */
+export function savingsProgress(weeksCompleted: number, totalWeeks: number): number {
+  if (totalWeeks <= 0) return 0;
+  return Math.min(100, round2((weeksCompleted / totalWeeks) * 100));
+}

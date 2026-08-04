@@ -1,0 +1,317 @@
+// Fair Savings - Family Weekly Savings & Loan Management System
+// Prisma schema - PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================================
+// ENUMS
+// ==========================================================
+
+enum LoanStatus {
+  ACTIVE
+  RENEWED
+  COMPLETED
+  DEFAULTED
+}
+
+enum PaymentStatus {
+  PAID
+  PENDING
+  MISSED
+  PARTIAL
+}
+
+enum TransactionType {
+  SAVINGS_PAYMENT
+  LOAN_PAYMENT
+  LOAN_ISSUE
+  PENALTY
+  SETTLEMENT
+  ADMIN_CHANGE
+}
+
+enum NotificationType {
+  WEEKLY_REMINDER
+  LOAN_REMINDER
+  PENALTY_REMINDER
+  SETTLEMENT_REMINDER
+  GENERAL
+}
+
+enum Theme {
+  LIGHT
+  DARK
+}
+
+enum Language {
+  EN
+  KN
+}
+
+// ==========================================================
+// CORE USERS
+// ==========================================================
+
+model Admin {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  passwordHash String
+  name         String
+  email        String?  @unique
+  phone        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  auditLogs AuditLog[]
+
+  @@map("admins")
+}
+
+model Member {
+  id             String   @id @default(uuid())
+  username       String   @unique // e.g. KD001
+  passwordHash   String
+  name           String
+  photoUrl       String?
+  phone          String?
+  address        String?
+  village        String?
+  aadhaarNumber  String?
+  joiningDate    DateTime @default(now())
+  nominee        String?
+  weeklyAmount   Decimal  @default(500) @db.Decimal(10, 2)
+  savingsCycleWeeks Int   @default(52)
+  isActive       Boolean  @default(true)
+  isDefaulter    Boolean  @default(false)
+  qrCode         String? // base64 or URL to generated QR card
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Family relationship: this member may be a "payer" for other members (children)
+  payerRelations   FamilyRelationship[] @relation("PayerToChild")
+  childRelation    FamilyRelationship?  @relation("ChildToPayer")
+
+  savings           Savings?
+  weeklyCollections WeeklyCollection[]
+  loans             Loan[]
+  penalties         Penalty[]
+  transactions      Transaction[]
+  notifications     Notification[]
+
+  @@index([village])
+  @@map("members")
+}
+
+// One child -> one payer (family head). Payer can pay for many children.
+model FamilyRelationship {
+  id        String @id @default(uuid())
+
+  payerId   String
+  payer     Member @relation("PayerToChild", fields: [payerId], references: [id])
+
+  childId   String @unique
+  child     Member @relation("ChildToPayer", fields: [childId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("family_relationships")
+}
+
+// ==========================================================
+// SAVINGS
+// ==========================================================
+
+model Savings {
+  id               String   @id @default(uuid())
+  memberId         String   @unique
+  member           Member   @relation(fields: [memberId], references: [id])
+
+  totalPaid        Decimal  @default(0) @db.Decimal(12, 2)
+  weeksCompleted    Int      @default(0)
+  weeksRemaining   Int      @default(52)
+  currentBalance   Decimal  @default(0) @db.Decimal(12, 2)
+  isSettled        Boolean  @default(false)
+  settlementDate   DateTime?
+  settlementAmount Decimal? @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("savings")
+}
+
+model WeeklyCollection {
+  id           String        @id @default(uuid())
+  memberId     String
+  member       Member        @relation(fields: [memberId], references: [id])
+
+  weekNumber   Int
+  amountDue    Decimal       @db.Decimal(10, 2)
+  amountPaid   Decimal       @default(0) @db.Decimal(10, 2)
+  status       PaymentStatus @default(PENDING)
+  collectedBy  String? // payer member id, if paid via family payer
+  paymentDate  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([memberId, weekNumber])
+  @@map("weekly_collections")
+}
+
+// ==========================================================
+// LOANS
+// ==========================================================
+
+model Loan {
+  id               String     @id @default(uuid())
+  memberId         String
+  member           Member     @relation(fields: [memberId], references: [id])
+
+  principalAmount  Decimal    @db.Decimal(12, 2)
+  interestRate     Decimal    @default(10) @db.Decimal(5, 2) // percent
+  durationWeeks    Int        @default(11)
+  totalRepayment   Decimal    @db.Decimal(12, 2)
+  weeklyEmi        Decimal    @db.Decimal(10, 2)
+
+  paidAmount       Decimal    @default(0) @db.Decimal(12, 2)
+  remainingAmount  Decimal    @db.Decimal(12, 2)
+  remainingWeeks   Int
+
+  status           LoanStatus @default(ACTIVE)
+  issueDate        DateTime   @default(now())
+  dueDate          DateTime?
+  renewalCount     Int        @default(0)
+  parentLoanId     String?    // if this loan is a renewal of a previous loan
+
+  payments   LoanPayment[]
+  penalties  Penalty[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("loans")
+}
+
+model LoanPayment {
+  id          String        @id @default(uuid())
+  loanId      String
+  loan        Loan          @relation(fields: [loanId], references: [id])
+
+  weekNumber  Int
+  emiDue      Decimal       @db.Decimal(10, 2)
+  amountPaid  Decimal       @default(0) @db.Decimal(10, 2)
+  status      PaymentStatus @default(PENDING)
+  paymentDate DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("loan_payments")
+}
+
+model Penalty {
+  id        String   @id @default(uuid())
+  memberId  String
+  member    Member   @relation(fields: [memberId], references: [id])
+
+  loanId    String?
+  loan      Loan?    @relation(fields: [loanId], references: [id])
+
+  reason    String   // e.g. "Missed EMI Week 4"
+  amount    Decimal  @db.Decimal(10, 2)
+  isPaid    Boolean  @default(false)
+  paidDate  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("penalties")
+}
+
+// ==========================================================
+// TRANSACTIONS / NOTIFICATIONS / REPORTS / SETTINGS / AUDIT
+// ==========================================================
+
+model Transaction {
+  id          String          @id @default(uuid())
+  memberId    String
+  member      Member          @relation(fields: [memberId], references: [id])
+
+  type        TransactionType
+  amount      Decimal         @db.Decimal(12, 2)
+  description String?
+  referenceId String? // loanId / weeklyCollectionId / penaltyId etc.
+  performedBy String? // admin id or "SYSTEM"
+
+  createdAt DateTime @default(now())
+
+  @@map("transactions")
+}
+
+model Notification {
+  id        String            @id @default(uuid())
+  memberId  String?
+  member    Member?           @relation(fields: [memberId], references: [id])
+
+  type      NotificationType
+  title     String
+  message   String
+  isRead    Boolean           @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@map("notifications")
+}
+
+model Report {
+  id          String   @id @default(uuid())
+  type        String   // "MEMBER_STATEMENT" | "SAVINGS_REPORT" | "LOAN_REPORT" | "COLLECTION_REPORT" | "YEARLY_REPORT"
+  format      String   // "PDF" | "EXCEL"
+  filters     Json?
+  generatedBy String
+  fileUrl     String?
+
+  createdAt DateTime @default(now())
+
+  @@map("reports")
+}
+
+model Settings {
+  id               String   @id @default(uuid())
+  collectionDay    String   @default("FRIDAY")
+  loanInterestRate Decimal  @default(10) @db.Decimal(5, 2)
+  penaltyRate      Decimal  @default(1) @db.Decimal(5, 2)
+  loanDurationWeeks Int     @default(11)
+  currency         String   @default("INR")
+  defaultLanguage  Language @default(EN)
+  defaultTheme     Theme    @default(LIGHT)
+
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  adminId   String
+  admin     Admin    @relation(fields: [adminId], references: [id])
+
+  action    String // e.g. "CREATE_MEMBER", "ISSUE_LOAN", "RESET_PASSWORD"
+  entity    String // e.g. "Member", "Loan"
+  entityId  String?
+  details   Json?
+
+  createdAt DateTime @default(now())
+
+  @@map("audit_logs")
+}

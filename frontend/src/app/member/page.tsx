@@ -19,19 +19,29 @@ interface MemberData {
   penalties: { id: string; amount: number }[];
 }
 
+interface ScheduleRow {
+  weekNumber: number;
+  dueDate: string;
+  status: string;
+  amountDue: number;
+}
+
 export default function MemberDashboard() {
   const { user } = useAuth();
   const { t } = useLanguage();
   const [data, setData] = useState<MemberData | null>(null);
+  const [schedule, setSchedule] = useState<ScheduleRow[]>([]);
 
   useEffect(() => {
     if (!user) return;
     api.get(`/dashboard/member/${user.id}`).then((res) => setData(res.data.data));
+    api.get(`/collections/schedule/${user.id}`, { params: { weeks: 4 } }).then((res) => setSchedule(res.data.data));
   }, [user]);
 
   const progress = data?.savings ? Math.min(100, Math.round((data.savings.weeksCompleted / data.savingsCycleWeeks) * 100)) : 0;
   const loanBalance = data?.loans.reduce((s, l) => s + Number(l.remainingAmount), 0) ?? 0;
   const fine = data?.penalties.reduce((s, p) => s + Number(p.amount), 0) ?? 0;
+  const upcoming = schedule.filter((s) => s.status !== "PAID").slice(0, 4);
 
   return (
     <>
@@ -56,6 +66,23 @@ export default function MemberDashboard() {
           </div>
           <p className="mt-2 text-xs text-ink-500">{progress}% complete</p>
         </div>
+
+        {upcoming.length > 0 && (
+          <div className="glass-card p-6">
+            <h3 className="mb-3 font-display font-semibold">Upcoming Collection Dates</h3>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {upcoming.map((row) => (
+                <div key={row.weekNumber} className="rounded-xl border border-ink-900/10 p-3 text-center dark:border-white/10">
+                  <div className="text-xs text-ink-500">Week {row.weekNumber}</div>
+                  <div className="mt-1 font-display font-semibold">
+                    {new Date(row.dueDate).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                  </div>
+                  <div className="mt-1 text-xs text-ink-500">₹{row.amountDue}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="flex justify-end">
           {user && (

@@ -50,3 +50,33 @@ export function savingsProgress(weeksCompleted: number, totalWeeks: number): num
   if (totalWeeks <= 0) return 0;
   return Math.min(100, round2((weeksCompleted / totalWeeks) * 100));
 }
+
+// ---------- Collection due-date scheduling ----------
+
+const WEEKDAY_MAP: Record<string, number> = {
+  SUNDAY: 0,
+  MONDAY: 1,
+  TUESDAY: 2,
+  WEDNESDAY: 3,
+  THURSDAY: 4,
+  FRIDAY: 5,
+  SATURDAY: 6,
+};
+
+/** The next date on/after `date` that falls on the given weekday name (e.g. "FRIDAY"). */
+export function nextWeekdayOnOrAfter(date: Date, weekdayName: string): Date {
+  const target = WEEKDAY_MAP[weekdayName.toUpperCase()] ?? 5;
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const diff = (target - d.getDay() + 7) % 7;
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+/** Due date for a given week number, counting weekly from the member's first collection day. */
+export function collectionDueDate(joiningDate: Date, weekNumber: number, collectionDay: string): Date {
+  const firstDue = nextWeekdayOnOrAfter(joiningDate, collectionDay);
+  const due = new Date(firstDue);
+  due.setDate(due.getDate() + (weekNumber - 1) * 7);
+  return due;
+}

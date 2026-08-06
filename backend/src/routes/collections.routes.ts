@@ -2,7 +2,7 @@ import { Router } from "express";
 import { prisma } from "../config/prisma";
 import { authenticate, requireRole, requireSelfOrAdmin, AuthRequest } from "../middleware/auth";
 import { ApiError } from "../middleware/errorHandler";
-import { savingsProgress } from "../utils/finance";
+import { savingsProgress, collectionDueDate } from "../utils/finance";
 
 const router = Router();
 router.use(authenticate);
@@ -17,6 +17,70 @@ router.get("/member/:id", requireSelfOrAdmin(), async (req, res) => {
 });
 
 /**
+ * GET /api/collections/schedule/:id?weeks=8
+ * Returns the member's collection schedule: past/paid weeks from the DB,
+ * plus computed upcoming due dates for weeks that haven't happened yet.
+ * Lets admins (and the member themself) see exactly which Fridays are due.
+ */
+router.get("/schedule/:id", requireSelfOrAdmin(), async (req, res) => {
+  const weeksAhead = Math.min(52, Number(req.query.weeks) || 8);
+
+  const member = await prisma.member.findUnique({ where: { id: req.params.id }, include: { savings: true } });
+  if (!member) throw new ApiError(404, "Member not found");
+
+  const settings = await prisma.settings.findFirst();
+  const collectionDay = settings?.collectionDay ?? "FRIDAY";
+
+  const existing = await prisma.weeklyCollection.findMany({
+    where: { memberId: member.id },
+    orderBy: { weekNumber: "asc" },
+  });
+  const existingByWeek = new Map<number, any>(existing.map((r: any) => [r.weekNumber, r]));
+
+  const weeksCompleted = member.savings?.weeksCompleted ?? 0;
+  const startWeek = weeksCompleted + 1;
+  const endWeek = Math.min(member.savingsCycleWeeks, startWeek + weeksAhead - 1);
+
+  interface ScheduleRow {
+    weekNumber: number;
+    dueDate: Date;
+    id: string | null;
+    amountDue: number | any;
+    amountPaid: number | any;
+    status: string;
+    paymentDate: Date | null;
+  }
+
+  const schedule: ScheduleRow[] = [];
+  for (let week = 1; week <= endWeek; week++) {
+    const row = existingByWeek.get(week);
+    if (row) {
+      schedule.push({
+        weekNumber: week,
+        dueDate: collectionDueDate(member.joiningDate, week, collectionDay),
+        id: row.id,
+        amountDue: row.amountDue,
+        amountPaid: row.amountPaid,
+        status: row.status,
+        paymentDate: row.paymentDate,
+      });
+    } else if (week >= startWeek) {
+      schedule.push({
+        weekNumber: week,
+        dueDate: collectionDueDate(member.joiningDate, week, collectionDay),
+        id: null,
+        amountDue: member.weeklyAmount,
+        amountPaid: 0,
+        status: "PENDING",
+        paymentDate: null,
+      });
+    }
+  }
+
+  res.json({ success: true, data: schedule });
+});
+
+/**
  * POST /api/collections/pay-single
  * Records one week's savings payment for a single member (admin only).
  */
@@ -28,7 +92,7 @@ router.post("/pay-single", requireRole("ADMIN"), async (req: AuthRequest, res) =
 
 /**
  * POST /api/collections/pay-family
- * KEY FEATURE: one payer (e.g. father) pays for several linked children in a single screen.
+ * One payer (e.g. father) pays for several linked children in a single screen.
  * body: { payerId, payments: [{ memberId, amount }, ...] }
  */
 router.post("/pay-family", requireRole("ADMIN"), async (req: AuthRequest, res) => {
@@ -48,7 +112,43 @@ router.post("/pay-family", requireRole("ADMIN"), async (req: AuthRequest, res) =
   res.status(201).json({ success: true, totalCollected: total, data: results });
 });
 
-/** Shared logic: records a weekly savings payment and updates the member's Savings summary. */
+/**
+ * PATCH /api/collections/:id
+ * Admin correction: edit an already-recorded weekly collection (amount,
+ * status, date). Recomputes the member's savings totals from the ledger
+ * afterward so corrections never drift out of sync.
+ */
+router.patch("/:id", requireRole("ADMIN"), async (req: AuthRequest, res) => {
+  const { amountPaid, status, paymentDate } = req.body;
+  const existing = await prisma.weeklyCollection.findUnique({ where: { id: req.params.id } });
+  if (!existing) throw new ApiError(404, "Collection record not found");
+
+  const updated = await prisma.weeklyCollection.update({
+    where: { id: req.params.id },
+    data: {
+      amountPaid: amountPaid ?? existing.amountPaid,
+      status: status ?? existing.status,
+      paymentDate: paymentDate ? new Date(paymentDate) : existing.paymentDate,
+    },
+  });
+
+  await recomputeSavings(existing.memberId);
+
+  await prisma.transaction.create({
+    data: {
+      memberId: existing.memberId,
+      type: "ADMIN_CHANGE",
+      amount: Number(updated.amountPaid),
+      description: `Correction to week ${updated.weekNumber} savings collection`,
+      referenceId: updated.id,
+      performedBy: req.user!.id,
+    },
+  });
+
+  res.json({ success: true, data: updated });
+});
+
+/** Shared logic: records a weekly savings payment, then recomputes the member's savings summary. */
 async function recordWeeklyPayment(memberId: string, amount: number, adminId: string, collectedBy: string) {
   const member = await prisma.member.findUnique({ where: { id: memberId }, include: { savings: true } });
   if (!member) throw new ApiError(404, `Member ${memberId} not found`);
@@ -70,19 +170,7 @@ async function recordWeeklyPayment(memberId: string, amount: number, adminId: st
     },
   });
 
-  const weeksCompleted = member.savings.weeksCompleted + 1;
-  const weeksRemaining = Math.max(0, member.savingsCycleWeeks - weeksCompleted);
-  const totalPaid = Number(member.savings.totalPaid) + Number(amount);
-
-  await prisma.savings.update({
-    where: { memberId },
-    data: {
-      totalPaid,
-      weeksCompleted,
-      weeksRemaining,
-      currentBalance: totalPaid,
-    },
-  });
+  await recomputeSavings(memberId);
 
   await prisma.transaction.create({
     data: {
@@ -95,10 +183,37 @@ async function recordWeeklyPayment(memberId: string, amount: number, adminId: st
     },
   });
 
-  return { ...collection, progress: savingsProgress(weeksCompleted, member.savingsCycleWeeks) };
+  const savings = await prisma.savings.findUnique({ where: { memberId } });
+  return { ...collection, progress: savingsProgress(savings?.weeksCompleted ?? 0, member.savingsCycleWeeks) };
 }
 
-/** PATCH /api/collections/:id/settle - mark 52-week settlement paid (admin only) */
+/**
+ * Recomputes a member's savings summary (totalPaid, weeksCompleted,
+ * weeksRemaining, currentBalance) directly from their WeeklyCollection
+ * ledger. Called after every payment or admin correction so the summary
+ * can never drift out of sync with the underlying records.
+ */
+async function recomputeSavings(memberId: string) {
+  const member = await prisma.member.findUnique({ where: { id: memberId } });
+  if (!member) return;
+
+  const agg = await prisma.weeklyCollection.aggregate({
+    where: { memberId, status: "PAID" },
+    _sum: { amountPaid: true },
+    _count: { _all: true },
+  });
+
+  const weeksCompleted = agg._count._all;
+  const totalPaid = Number(agg._sum.amountPaid ?? 0);
+  const weeksRemaining = Math.max(0, member.savingsCycleWeeks - weeksCompleted);
+
+  await prisma.savings.update({
+    where: { memberId },
+    data: { totalPaid, weeksCompleted, weeksRemaining, currentBalance: totalPaid },
+  });
+}
+
+/** PATCH /api/collections/settle/:memberId - mark 52-week settlement paid (admin only) */
 router.patch("/settle/:memberId", requireRole("ADMIN"), async (req: AuthRequest, res) => {
   const { settlementAmount } = req.body;
   const savings = await prisma.savings.update({

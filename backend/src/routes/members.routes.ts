@@ -31,7 +31,11 @@ router.get("/", requireRole("ADMIN"), async (req, res) => {
         status === "defaulter" ? { isDefaulter: true } : {},
       ],
     },
-    include: { savings: true, childRelation: { include: { payer: true } } },
+    include: {
+      savings: true,
+      childRelation: { include: { payer: true } },
+      payerRelations: { include: { child: { include: { savings: true } } } },
+    },
     orderBy: { createdAt: "desc" },
   });
 
@@ -106,13 +110,42 @@ router.post(
 
 /** PUT /api/members/:id - edit member (admin only) */
 router.put("/:id", requireRole("ADMIN"), async (req: AuthRequest, res) => {
-  const { name, phone, address, village, aadhaarNumber, nominee, weeklyAmount, savingsCycleWeeks, photoUrl } =
-    req.body;
+  const {
+    name,
+    username,
+    password,
+    phone,
+    address,
+    village,
+    aadhaarNumber,
+    nominee,
+    weeklyAmount,
+    savingsCycleWeeks,
+    photoUrl,
+  } = req.body;
 
-  const member = await prisma.member.update({
-    where: { id: req.params.id },
-    data: { name, phone, address, village, aadhaarNumber, nominee, weeklyAmount, savingsCycleWeeks, photoUrl },
-  });
+  if (username) {
+    const existing = await prisma.member.findUnique({ where: { username } });
+    if (existing && existing.id !== req.params.id) {
+      throw new ApiError(409, `Username "${username}" is already taken`);
+    }
+  }
+
+  const data: Record<string, any> = {
+    name,
+    phone,
+    address,
+    village,
+    aadhaarNumber,
+    nominee,
+    weeklyAmount,
+    savingsCycleWeeks,
+    photoUrl,
+  };
+  if (username) data.username = username;
+  if (password) data.passwordHash = await hashPassword(password);
+
+  const member = await prisma.member.update({ where: { id: req.params.id }, data });
 
   await prisma.auditLog.create({
     data: { adminId: req.user!.id, action: "UPDATE_MEMBER", entity: "Member", entityId: member.id },
@@ -149,11 +182,29 @@ router.post("/:id/reset-password", requireRole("ADMIN"), async (req: AuthRequest
   res.json({ success: true, credentials: { username: member.username, password: rawPassword } });
 });
 
-/** DELETE /api/members/:id (admin only) */
+/** DELETE /api/members/:id (admin only) - cascades through all related records */
 router.delete("/:id", requireRole("ADMIN"), async (req: AuthRequest, res) => {
-  await prisma.member.delete({ where: { id: req.params.id } });
+  const memberId = req.params.id;
+  const member = await prisma.member.findUnique({ where: { id: memberId } });
+  if (!member) throw new ApiError(404, "Member not found");
+
+  const loans = await prisma.loan.findMany({ where: { memberId }, select: { id: true } });
+  const loanIds = loans.map((l: (typeof loans)[number]) => l.id);
+
+  await prisma.$transaction([
+    prisma.loanPayment.deleteMany({ where: { loanId: { in: loanIds } } }),
+    prisma.penalty.deleteMany({ where: { memberId } }),
+    prisma.loan.deleteMany({ where: { memberId } }),
+    prisma.weeklyCollection.deleteMany({ where: { memberId } }),
+    prisma.transaction.deleteMany({ where: { memberId } }),
+    prisma.notification.deleteMany({ where: { memberId } }),
+    prisma.familyRelationship.deleteMany({ where: { OR: [{ payerId: memberId }, { childId: memberId }] } }),
+    prisma.savings.deleteMany({ where: { memberId } }),
+    prisma.member.delete({ where: { id: memberId } }),
+  ]);
+
   await prisma.auditLog.create({
-    data: { adminId: req.user!.id, action: "DELETE_MEMBER", entity: "Member", entityId: req.params.id },
+    data: { adminId: req.user!.id, action: "DELETE_MEMBER", entity: "Member", entityId: memberId },
   });
   res.json({ success: true, message: "Member deleted" });
 });

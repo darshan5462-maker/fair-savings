@@ -86,6 +86,17 @@ router.get("/member/:id", requireSelfOrAdmin(), async (req, res) => {
       savings: true,
       loans: { where: { status: { in: ["ACTIVE", "RENEWED"] } } },
       penalties: { where: { isPaid: false } },
+      payerRelations: {
+        include: {
+          child: {
+            include: {
+              savings: true,
+              loans: { where: { status: { in: ["ACTIVE", "RENEWED"] } } },
+              penalties: { where: { isPaid: false } },
+            },
+          },
+        },
+      },
     },
   });
   res.json({ success: true, data: member ? { ...member, passwordHash: undefined } : null });

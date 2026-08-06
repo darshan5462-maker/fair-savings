@@ -196,7 +196,14 @@ export default function CollectionsPage() {
                         className="h-4 w-4 rounded accent-brand-500"
                       />
                       <div>
-                        <div className="font-medium">{child.name}</div>
+                        <div className="font-medium">
+                          {child.name}
+                          {child.id === selectedPayer.id && (
+                            <span className="ml-1.5 rounded-full bg-ink-900/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-ink-500 dark:bg-white/10">
+                              self
+                            </span>
+                          )}
+                        </div>
                         <div className="text-xs text-ink-500">{child.username}</div>
                       </div>
                     </label>

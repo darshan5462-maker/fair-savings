@@ -66,8 +66,6 @@ export default function MembersPage() {
   }, [search]);
 
   const topLevel = members.filter((m) => !m.childRelation);
-  const payerGroups = topLevel.filter((m) => (m.payerRelations?.length ?? 0) > 0);
-  const standalone = topLevel.filter((m) => (m.payerRelations?.length ?? 0) === 0);
 
   function openAddPayer() {
     setModalMode("addPayer");
@@ -249,60 +247,40 @@ export default function MembersPage() {
           </div>
         )}
 
-        {!loading && payerGroups.length === 0 && standalone.length === 0 && (
+        {!loading && topLevel.length === 0 && (
           <div className="glass-card p-10 text-center text-ink-500">{t("noDataFound")}</div>
         )}
 
         {!loading &&
-          payerGroups.map((payer) => (
-            <div key={payer.id} className="glass-card overflow-hidden">
-              <div className="flex items-center justify-between border-b border-ink-900/5 bg-brand-50/60 px-4 py-3 dark:border-white/5 dark:bg-brand-900/20">
-                <div className="flex items-center gap-2">
-                  <UsersIcon className="h-4 w-4 text-brand-500" />
-                  <span className="font-display font-semibold">{payer.name}</span>
-                  <span className="font-mono text-xs text-ink-500">{payer.username}</span>
-                  <span className="text-xs text-ink-500">· Payer for {payer.payerRelations?.length ?? 0} member(s)</span>
+          topLevel.map((member) => {
+            const childCount = member.payerRelations?.length ?? 0;
+            return (
+              <div key={member.id} className="glass-card overflow-hidden">
+                <div className="flex items-center justify-between border-b border-ink-900/5 bg-brand-50/60 px-4 py-3 dark:border-white/5 dark:bg-brand-900/20">
+                  <div className="flex items-center gap-2">
+                    <UsersIcon className="h-4 w-4 text-brand-500" />
+                    <span className="font-display font-semibold">{member.name}</span>
+                    <span className="font-mono text-xs text-ink-500">{member.username}</span>
+                    <span className="text-xs text-ink-500">
+                      {childCount > 0 ? `· Payer for ${childCount} member(s)` : "· pays for self"}
+                    </span>
+                  </div>
+                  <button onClick={() => openAddChild(member)} className="btn-secondary !px-3 !py-1.5 text-xs">
+                    <UserPlusIcon className="h-3.5 w-3.5" /> Add Child
+                  </button>
                 </div>
-                <button onClick={() => openAddChild(payer)} className="btn-secondary !px-3 !py-1.5 text-xs">
-                  <UserPlusIcon className="h-3.5 w-3.5" /> Add Child
-                </button>
+                <table className="w-full text-sm">
+                  {tableHead}
+                  <tbody>
+                    <MemberRow member={member} isChild={false} />
+                    {member.payerRelations?.map((r) => (
+                      <MemberRow key={r.child.id} member={r.child} isChild />
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <table className="w-full text-sm">
-                {tableHead}
-                <tbody>
-                  <MemberRow member={payer} isChild={false} />
-                  {payer.payerRelations?.map((r) => (
-                    <MemberRow key={r.child.id} member={r.child} isChild />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ))}
-
-        {!loading && standalone.length > 0 && (
-          <div className="glass-card overflow-hidden">
-            <div className="border-b border-ink-900/5 px-4 py-3 dark:border-white/5">
-              <span className="font-display font-semibold">Other Members</span>
-              <span className="ml-2 text-xs text-ink-500">not linked to a family payer</span>
-            </div>
-            <table className="w-full text-sm">
-              {tableHead}
-              <tbody>
-                {standalone.map((m) => (
-                  <tr key={m.id} className="group">
-                    <MemberRow member={m} isChild={false} />
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="border-t border-ink-900/5 px-4 py-2 dark:border-white/5">
-              <p className="text-xs text-ink-500">
-                Use "Add Child" from a payer's group above, or edit a member's family link from the Weekly
-                Collections page.
-              </p>
-            </div>
-          </div>
-        )}
+            );
+          })}
       </main>
 
       {/* Add / Edit Modal */}

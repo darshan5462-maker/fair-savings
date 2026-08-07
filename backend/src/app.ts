@@ -17,6 +17,7 @@ import dashboardRoutes from "./routes/dashboard.routes";
 import reportRoutes from "./routes/reports.routes";
 import devRoutes from "./routes/dev.routes";
 import { errorHandler, notFound } from "./middleware/errorHandler";
+import { decimalSerializer } from "./middleware/decimalSerializer";
 
 const app = express();
 
@@ -24,6 +25,7 @@ app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN || "*", credentials: true }));
 app.use(express.json({ limit: "5mb" }));
 app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
+app.use(decimalSerializer);
 
 const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 500 });
 app.use("/api", apiLimiter);

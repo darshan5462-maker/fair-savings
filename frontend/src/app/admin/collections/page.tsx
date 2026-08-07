@@ -69,11 +69,11 @@ export default function CollectionsPage() {
     if (payer.payerRelations && payer.payerRelations.length > 0) {
       payer.payerRelations.forEach((r) => {
         initChecked[r.child.id] = true;
-        initAmounts[r.child.id] = r.child.weeklyAmount;
+        initAmounts[r.child.id] = Number(r.child.weeklyAmount);
       });
     } else {
       initChecked[payer.id] = true;
-      initAmounts[payer.id] = payer.weeklyAmount;
+      initAmounts[payer.id] = Number(payer.weeklyAmount);
     }
     setChecked(initChecked);
     setAmounts(initAmounts);
@@ -81,13 +81,13 @@ export default function CollectionsPage() {
 
   const total = Object.entries(checked)
     .filter(([, v]) => v)
-    .reduce((sum, [id]) => sum + (amounts[id] || 0), 0);
+    .reduce((sum, [id]) => sum + Number(amounts[id] || 0), 0);
 
   async function handleCollect() {
     if (!selectedPayer) return;
     const payments = Object.entries(checked)
       .filter(([, v]) => v)
-      .map(([memberId]) => ({ memberId, amount: amounts[memberId] }));
+      .map(([memberId]) => ({ memberId, amount: Number(amounts[memberId]) }));
 
     if (payments.length === 0) return toast.error("Select at least one member");
 
@@ -126,7 +126,7 @@ export default function CollectionsPage() {
 
   function startEdit(row: ScheduleRow) {
     setEditingRow(row.id);
-    setEditAmount(row.amountPaid || row.amountDue);
+    setEditAmount(Number(row.amountPaid) || Number(row.amountDue));
   }
 
   async function saveEdit(row: ScheduleRow) {
@@ -298,7 +298,7 @@ export default function CollectionsPage() {
                           <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusColor[row.status]}`}>
                             {row.status === "PENDING" && !row.id ? "Upcoming" : row.status}
                           </span>
-                          <span className="w-14 text-right tabular-nums">₹{row.amountPaid || row.amountDue}</span>
+                          <span className="w-14 text-right tabular-nums">₹{Number(row.amountPaid) || Number(row.amountDue)}</span>
                           {row.id && (
                             <button onClick={() => startEdit(row)} className="rounded-lg p-1.5 hover:bg-ink-900/5 dark:hover:bg-white/10">
                               <PencilSquareIcon className="h-4 w-4" />

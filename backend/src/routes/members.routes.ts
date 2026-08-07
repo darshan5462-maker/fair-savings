@@ -4,7 +4,7 @@ import QRCode from "qrcode";
 import { prisma } from "../config/prisma";
 import { authenticate, requireRole, requireSelfOrAdmin, AuthRequest } from "../middleware/auth";
 import { ApiError } from "../middleware/errorHandler";
-import { generateRandomPassword, hashPassword, nextUsername } from "../utils/auth";
+import { generateRandomPassword, hashPassword, nextUsernameFromList } from "../utils/auth";
 
 const router = Router();
 router.use(authenticate);
@@ -69,28 +69,41 @@ router.post(
     const { name, phone, address, village, aadhaarNumber, nominee, weeklyAmount, savingsCycleWeeks, payerId } =
       req.body;
 
-    const last = await prisma.member.findFirst({ orderBy: { username: "desc" } });
-    const username = nextUsername(last?.username ?? null);
     const rawPassword = generateRandomPassword();
     const passwordHash = await hashPassword(rawPassword);
 
-    const member = await prisma.member.create({
-      data: {
-        username,
-        passwordHash,
-        name,
-        phone,
-        address,
-        village,
-        aadhaarNumber,
-        nominee,
-        weeklyAmount: weeklyAmount ?? 500,
-        savingsCycleWeeks: savingsCycleWeeks ?? 52,
-        savings: {
-          create: { weeksRemaining: savingsCycleWeeks ?? 52 },
-        },
-      },
-    });
+    // Retry a few times in case of a genuine race between two concurrent
+    // requests both computing the same "next" username at once.
+    let member;
+    let username = "";
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const existing = await prisma.member.findMany({ select: { username: true } });
+      username = nextUsernameFromList(existing.map((m: { username: string }) => m.username));
+      try {
+        member = await prisma.member.create({
+          data: {
+            username,
+            passwordHash,
+            name,
+            phone,
+            address,
+            village,
+            aadhaarNumber,
+            nominee,
+            weeklyAmount: weeklyAmount ?? 500,
+            savingsCycleWeeks: savingsCycleWeeks ?? 52,
+            savings: {
+              create: { weeksRemaining: savingsCycleWeeks ?? 52 },
+            },
+          },
+        });
+        break;
+      } catch (err: any) {
+        if (err.code === "P2002" && attempt < 4) continue; // username taken, retry with a fresh scan
+        throw err;
+      }
+    }
+    if (!member) throw new ApiError(500, "Could not generate a unique username, please try again");
 
     if (payerId) {
       await prisma.familyRelationship.create({ data: { payerId, childId: member.id } });

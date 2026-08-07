@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
-import { PlusIcon, XMarkIcon } from "@heroicons/react/24/outline";
+import { PlusIcon, XMarkIcon, ClockIcon } from "@heroicons/react/24/outline";
 import { Navbar } from "@/components/Navbar";
 import { useLanguage } from "@/i18n/LanguageContext";
 import { api } from "@/lib/api";
@@ -16,7 +16,17 @@ interface Loan {
   remainingAmount: number;
   remainingWeeks: number;
   status: string;
+  issueDate: string;
   member: { name: string; username: string };
+}
+
+interface LoanPayment {
+  id: string;
+  weekNumber: number;
+  emiDue: number;
+  amountPaid: number;
+  status: string;
+  paymentDate: string | null;
 }
 
 interface MemberOption {
@@ -30,6 +40,10 @@ const statusColor: Record<string, string> = {
   RENEWED: "bg-warning/10 text-warning",
   COMPLETED: "bg-success/10 text-success",
   DEFAULTED: "bg-danger/10 text-danger",
+  PAID: "bg-success/10 text-success",
+  PENDING: "bg-warning/10 text-warning",
+  MISSED: "bg-danger/10 text-danger",
+  PARTIAL: "bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300",
 };
 
 export default function LoansPage() {
@@ -41,12 +55,21 @@ export default function LoansPage() {
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({ memberId: "", principalAmount: 10000, interestRate: 10, durationWeeks: 11 });
 
+  const [historyFor, setHistoryFor] = useState<Loan | null>(null);
+  const [payments, setPayments] = useState<LoanPayment[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
   function load() {
     setLoading(true);
     Promise.all([api.get("/loans"), api.get("/members")])
       .then(([loansRes, membersRes]) => {
         setLoans(loansRes.data.data);
-        setMembers(membersRes.data.data.map((m: any) => ({ id: m.id, name: m.name, username: m.username })));
+        // Loans can only be issued to payers/standalone members, not a member
+        // who is themselves someone else's linked child.
+        const payerOptions = membersRes.data.data
+          .filter((m: any) => !m.childRelation)
+          .map((m: any) => ({ id: m.id, name: m.name, username: m.username }));
+        setMembers(payerOptions);
       })
       .finally(() => setLoading(false));
   }
@@ -80,6 +103,19 @@ export default function LoansPage() {
     }
   }
 
+  async function openHistory(loan: Loan) {
+    setHistoryFor(loan);
+    setHistoryLoading(true);
+    try {
+      const { data } = await api.get(`/loans/${loan.id}`);
+      setPayments(data.data.payments);
+    } catch {
+      toast.error("Could not load loan history");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
   const totalRepayment = Math.round(form.principalAmount * (1 + form.interestRate / 100));
   const weeklyEmi = form.durationWeeks > 0 ? Math.round(totalRepayment / form.durationWeeks) : 0;
 
@@ -93,11 +129,12 @@ export default function LoansPage() {
           </button>
         </div>
 
-        <div className="glass-card overflow-hidden">
+        <div className="glass-card overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-ink-900/5 text-left text-xs uppercase tracking-wide text-ink-500 dark:bg-white/5 dark:text-ink-300">
               <tr>
                 <th className="px-4 py-3">{t("name")}</th>
+                <th className="px-4 py-3">Issued</th>
                 <th className="px-4 py-3">Principal</th>
                 <th className="px-4 py-3">Interest</th>
                 <th className="px-4 py-3">Weekly EMI</th>
@@ -111,14 +148,14 @@ export default function LoansPage() {
               {loading &&
                 Array.from({ length: 4 }).map((_, i) => (
                   <tr key={i} className="border-t border-ink-900/5 dark:border-white/5">
-                    <td colSpan={8} className="px-4 py-3">
+                    <td colSpan={9} className="px-4 py-3">
                       <div className="skeleton h-5 w-full" />
                     </td>
                   </tr>
                 ))}
               {!loading && loans.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-ink-500">
+                  <td colSpan={9} className="px-4 py-10 text-center text-ink-500">
                     {t("noDataFound")}
                   </td>
                 </tr>
@@ -130,6 +167,9 @@ export default function LoansPage() {
                       {l.member.name}
                       <div className="font-mono text-xs text-ink-500">{l.member.username}</div>
                     </td>
+                    <td className="px-4 py-3 text-ink-500">
+                      {new Date(l.issueDate).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
+                    </td>
                     <td className="px-4 py-3">₹{l.principalAmount}</td>
                     <td className="px-4 py-3">{l.interestRate}%</td>
                     <td className="px-4 py-3">₹{l.weeklyEmi}</td>
@@ -138,12 +178,17 @@ export default function LoansPage() {
                     <td className="px-4 py-3">
                       <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusColor[l.status]}`}>{l.status}</span>
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      {(l.status === "ACTIVE" || l.status === "RENEWED") && (
-                        <button onClick={() => payEmi(l.id, l.weeklyEmi)} className="btn-secondary !px-3 !py-1.5 text-xs">
-                          Record EMI
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => openHistory(l)} className="btn-secondary !px-3 !py-1.5 text-xs">
+                          <ClockIcon className="h-3.5 w-3.5" /> History
                         </button>
-                      )}
+                        {(l.status === "ACTIVE" || l.status === "RENEWED") && (
+                          <button onClick={() => payEmi(l.id, l.weeklyEmi)} className="btn-secondary !px-3 !py-1.5 text-xs">
+                            Record EMI
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -152,6 +197,7 @@ export default function LoansPage() {
         </div>
       </main>
 
+      {/* Issue Loan modal */}
       <AnimatePresence>
         {showIssue && (
           <motion.div
@@ -178,7 +224,7 @@ export default function LoansPage() {
 
               <div className="space-y-3">
                 <div>
-                  <label className="mb-1 block text-xs font-semibold uppercase text-ink-500">Member</label>
+                  <label className="mb-1 block text-xs font-semibold uppercase text-ink-500">Member (payer)</label>
                   <select
                     required
                     className="input-field"
@@ -192,6 +238,7 @@ export default function LoansPage() {
                       </option>
                     ))}
                   </select>
+                  <p className="mt-1 text-xs text-ink-500">Only family payers and standalone members can hold a loan.</p>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold uppercase text-ink-500">Principal Amount (₹)</label>
@@ -240,6 +287,60 @@ export default function LoansPage() {
                 {submitting ? t("loading") : "Issue Loan"}
               </button>
             </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Loan history modal - date-wise EMI schedule */}
+      <AnimatePresence>
+        {historyFor && (
+          <motion.div
+            className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setHistoryFor(null)}
+          >
+            <motion.div
+              onClick={(e) => e.stopPropagation()}
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              className="glass-card w-full max-w-lg p-6"
+            >
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="font-display text-lg font-bold">Loan History — {historyFor.member.name}</h3>
+                <button onClick={() => setHistoryFor(null)}>
+                  <XMarkIcon className="h-5 w-5" />
+                </button>
+              </div>
+
+              {historyLoading ? (
+                <div className="skeleton h-56 rounded-xl" />
+              ) : (
+                <div className="max-h-96 space-y-1.5 overflow-y-auto pr-1">
+                  {payments.map((p) => (
+                    <div
+                      key={p.id}
+                      className="flex items-center justify-between rounded-xl border border-ink-900/10 px-3 py-2 text-sm dark:border-white/10"
+                    >
+                      <div>
+                        <div className="font-medium">Week {p.weekNumber}</div>
+                        <div className="text-xs text-ink-500">
+                          {p.paymentDate
+                            ? new Date(p.paymentDate).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
+                            : "Not yet paid"}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusColor[p.status]}`}>{p.status}</span>
+                        <span className="w-14 text-right tabular-nums">₹{p.amountPaid || p.emiDue}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

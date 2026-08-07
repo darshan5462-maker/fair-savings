@@ -26,6 +26,29 @@ router.get("/member/:id", requireSelfOrAdmin(), async (req, res) => {
   res.json({ success: true, data: transactions });
 });
 
+/**
+ * GET /api/transactions/family/:payerId
+ * Combined, date-wise history for a payer AND every child linked to them -
+ * every savings payment, loan issue, EMI payment, and penalty across the
+ * whole family in one chronological feed. Self-accessible so a payer sees
+ * this on their own dashboard, not just the admin.
+ */
+router.get("/family/:payerId", requireSelfOrAdmin("payerId"), async (req, res) => {
+  const relations = await prisma.familyRelationship.findMany({
+    where: { payerId: req.params.payerId },
+    select: { childId: true },
+  });
+  const memberIds = [req.params.payerId, ...relations.map((r: { childId: string }) => r.childId)];
+
+  const transactions = await prisma.transaction.findMany({
+    where: { memberId: { in: memberIds } },
+    include: { member: { select: { id: true, name: true, username: true } } },
+    orderBy: { createdAt: "desc" },
+    take: 500,
+  });
+  res.json({ success: true, data: transactions });
+});
+
 // Note: no PUT/DELETE routes are exposed by design — transactions are an
 // append-only audit trail. "Nothing should ever be deleted."
 

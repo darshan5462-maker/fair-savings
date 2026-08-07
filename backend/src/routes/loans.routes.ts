@@ -28,10 +28,33 @@ router.get("/member/:id", requireSelfOrAdmin(), async (req, res) => {
   res.json({ success: true, data: loans });
 });
 
-/** POST /api/loans - issue a new loan (admin only) */
+/** GET /api/loans/:id - a single loan with its full EMI payment history (self or admin) */
+router.get("/:id", async (req: AuthRequest, res) => {
+  const loan = await prisma.loan.findUnique({
+    where: { id: req.params.id },
+    include: {
+      payments: { orderBy: { weekNumber: "asc" } },
+      penalties: { orderBy: { createdAt: "asc" } },
+      member: { select: { id: true, name: true, username: true } },
+    },
+  });
+  if (!loan) throw new ApiError(404, "Loan not found");
+  if (req.user!.role !== "ADMIN" && req.user!.id !== loan.memberId) {
+    throw new ApiError(403, "Access denied");
+  }
+  res.json({ success: true, data: loan });
+});
+
+/** POST /api/loans - issue a new loan (admin only, payer/standalone members only) */
 router.post("/", requireRole("ADMIN"), async (req: AuthRequest, res) => {
   const { memberId, principalAmount, interestRate, durationWeeks } = req.body;
   if (!memberId || !principalAmount) throw new ApiError(400, "memberId and principalAmount are required");
+
+  const member = await prisma.member.findUnique({ where: { id: memberId }, include: { childRelation: true } });
+  if (!member) throw new ApiError(404, "Member not found");
+  if (member.childRelation) {
+    throw new ApiError(400, "Loans can only be issued to a family payer, not to a linked child member");
+  }
 
   const settings = await prisma.settings.findFirst();
   const rate = interestRate ?? Number(settings?.loanInterestRate ?? 10);

@@ -38,7 +38,7 @@ export default function PenaltiesPage() {
     <>
       <Navbar title={t("penalties")} />
       <main className="p-6">
-        <div className="glass-card overflow-hidden">
+        <div className="glass-card overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-ink-900/5 text-left text-xs uppercase tracking-wide text-ink-500 dark:bg-white/5 dark:text-ink-300">
               <tr>

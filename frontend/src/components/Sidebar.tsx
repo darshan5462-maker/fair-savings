@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { clsx } from "clsx";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Squares2X2Icon,
   UsersIcon,
@@ -14,9 +15,11 @@ import {
   QueueListIcon,
   Cog6ToothIcon,
   ArrowLeftStartOnRectangleIcon,
+  XMarkIcon,
 } from "@heroicons/react/24/outline";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/i18n/LanguageContext";
+import { useMobileNav } from "@/contexts/MobileNavContext";
 
 const adminNav = [
   { href: "/admin", icon: Squares2X2Icon, key: "dashboard" as const },
@@ -36,14 +39,14 @@ const memberNav = [
   { href: "/member/notifications", icon: BellIcon, key: "notifications" as const },
 ];
 
-export function Sidebar({ variant }: { variant: "admin" | "member" }) {
+function SidebarContent({ variant, onNavigate }: { variant: "admin" | "member"; onNavigate?: () => void }) {
   const pathname = usePathname();
   const { logout, user } = useAuth();
   const { t } = useLanguage();
   const items = variant === "admin" ? adminNav : memberNav;
 
   return (
-    <aside className="hidden w-64 shrink-0 flex-col border-r border-ink-900/5 bg-white/60 p-4 backdrop-blur-xl dark:border-white/5 dark:bg-surface-dark-card/60 md:flex">
+    <>
       <div className="mb-6 flex items-center gap-2 px-2 font-display text-lg font-bold">
         <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-gradient text-white">₹</span>
         {t("appName")}
@@ -57,6 +60,7 @@ export function Sidebar({ variant }: { variant: "admin" | "member" }) {
             <Link
               key={item.href}
               href={item.href}
+              onClick={onNavigate}
               className={clsx(
                 "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
                 active
@@ -83,6 +87,46 @@ export function Sidebar({ variant }: { variant: "admin" | "member" }) {
           {t("logout")}
         </button>
       </div>
-    </aside>
+    </>
+  );
+}
+
+export function Sidebar({ variant }: { variant: "admin" | "member" }) {
+  const { isOpen, close } = useMobileNav();
+
+  return (
+    <>
+      {/* Desktop sidebar */}
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-ink-900/5 bg-white/60 p-4 backdrop-blur-xl dark:border-white/5 dark:bg-surface-dark-card/60 md:flex">
+        <SidebarContent variant={variant} />
+      </aside>
+
+      {/* Mobile drawer */}
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={close}
+          >
+            <motion.aside
+              onClick={(e) => e.stopPropagation()}
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
+              transition={{ type: "tween", duration: 0.25 }}
+              className="flex h-full w-72 flex-col bg-surface-light p-4 shadow-2xl dark:bg-surface-dark"
+            >
+              <button onClick={close} className="mb-2 flex h-9 w-9 items-center justify-center self-end rounded-full hover:bg-ink-900/5 dark:hover:bg-white/10">
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+              <SidebarContent variant={variant} onNavigate={close} />
+            </motion.aside>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }

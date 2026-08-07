@@ -8,6 +8,7 @@ import {
   ExclamationTriangleIcon,
   ArrowDownTrayIcon,
   UsersIcon,
+  ClockIcon,
 } from "@heroicons/react/24/outline";
 import { Navbar } from "@/components/Navbar";
 import { StatCard } from "@/components/StatCard";
@@ -51,15 +52,40 @@ interface ScheduleRow {
   amountDue: number;
 }
 
+interface Transaction {
+  id: string;
+  type: string;
+  amount: number;
+  description?: string;
+  createdAt: string;
+  member?: { name: string; username: string };
+}
+
+const typeColor: Record<string, string> = {
+  SAVINGS_PAYMENT: "bg-success/10 text-success",
+  LOAN_PAYMENT: "bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300",
+  LOAN_ISSUE: "bg-warning/10 text-warning",
+  PENALTY: "bg-danger/10 text-danger",
+  SETTLEMENT: "bg-success/10 text-success",
+  ADMIN_CHANGE: "bg-ink-900/10 text-ink-500 dark:bg-white/10",
+};
+
 export default function MemberDashboard() {
   const { user } = useAuth();
   const { t } = useLanguage();
   const [data, setData] = useState<MemberData | null>(null);
   const [schedule, setSchedule] = useState<ScheduleRow[]>([]);
+  const [history, setHistory] = useState<Transaction[]>([]);
 
   useEffect(() => {
     if (!user) return;
-    api.get(`/dashboard/member/${user.id}`).then((res) => setData(res.data.data));
+    api.get(`/dashboard/member/${user.id}`).then((res) => {
+      const memberData = res.data.data as MemberData;
+      setData(memberData);
+      const isPayer = (memberData?.payerRelations?.length ?? 0) > 0;
+      const historyUrl = isPayer ? `/transactions/family/${user.id}` : `/transactions/member/${user.id}`;
+      api.get(historyUrl).then((histRes) => setHistory(histRes.data.data));
+    });
     api.get(`/collections/schedule/${user.id}`, { params: { weeks: 4 } }).then((res) => setSchedule(res.data.data));
   }, [user]);
 
@@ -177,6 +203,37 @@ export default function MemberDashboard() {
             )}
           </>
         )}
+
+        <div className="glass-card p-6">
+          <h3 className="mb-3 flex items-center gap-2 font-display font-semibold">
+            <ClockIcon className="h-4 w-4 text-brand-500" /> History
+          </h3>
+          <div className="max-h-96 space-y-1.5 overflow-y-auto pr-1">
+            {history.length === 0 && <p className="py-6 text-center text-sm text-ink-500">{t("noDataFound")}</p>}
+            {history.map((tx) => (
+              <div
+                key={tx.id}
+                className="flex items-center justify-between gap-3 rounded-xl border border-ink-900/10 px-3 py-2.5 text-sm dark:border-white/10"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    {tx.member && <span className="font-medium">{tx.member.name}</span>}
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${typeColor[tx.type] ?? ""}`}>
+                      {tx.type.replace("_", " ")}
+                    </span>
+                  </div>
+                  <div className="truncate text-xs text-ink-500">{tx.description}</div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="font-semibold tabular-nums">₹{tx.amount}</div>
+                  <div className="text-xs text-ink-500">
+                    {new Date(tx.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
 
         <div className="flex justify-end">
           {user && (

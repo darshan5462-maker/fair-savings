@@ -12,6 +12,7 @@ import {
   PencilSquareIcon,
   UserPlusIcon,
   UsersIcon,
+  ClockIcon,
 } from "@heroicons/react/24/outline";
 import { Navbar } from "@/components/Navbar";
 import { useLanguage } from "@/i18n/LanguageContext";
@@ -31,6 +32,24 @@ interface Member {
   payerRelations?: { child: Member }[];
 }
 
+interface Transaction {
+  id: string;
+  type: string;
+  amount: number;
+  description?: string;
+  createdAt: string;
+  member: { name: string; username: string };
+}
+
+const typeColor: Record<string, string> = {
+  SAVINGS_PAYMENT: "bg-success/10 text-success",
+  LOAN_PAYMENT: "bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300",
+  LOAN_ISSUE: "bg-warning/10 text-warning",
+  PENALTY: "bg-danger/10 text-danger",
+  SETTLEMENT: "bg-success/10 text-success",
+  ADMIN_CHANGE: "bg-ink-900/10 text-ink-500 dark:bg-white/10",
+};
+
 type ModalMode = "addPayer" | "addChild" | "edit" | null;
 
 const emptyForm = { name: "", username: "", password: "", phone: "", village: "", weeklyAmount: 500 };
@@ -46,6 +65,23 @@ export default function MembersPage() {
   const [form, setForm] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
   const [newCreds, setNewCreds] = useState<{ username: string; password: string } | null>(null);
+
+  const [historyFor, setHistoryFor] = useState<Member | null>(null);
+  const [history, setHistory] = useState<Transaction[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  async function openHistory(member: Member) {
+    setHistoryFor(member);
+    setHistoryLoading(true);
+    try {
+      const { data } = await api.get(`/transactions/family/${member.id}`);
+      setHistory(data.data);
+    } catch {
+      toast.error("Could not load history");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -255,7 +291,7 @@ export default function MembersPage() {
           topLevel.map((member) => {
             const childCount = member.payerRelations?.length ?? 0;
             return (
-              <div key={member.id} className="glass-card overflow-hidden">
+              <div key={member.id} className="glass-card overflow-x-auto">
                 <div className="flex items-center justify-between border-b border-ink-900/5 bg-brand-50/60 px-4 py-3 dark:border-white/5 dark:bg-brand-900/20">
                   <div className="flex items-center gap-2">
                     <UsersIcon className="h-4 w-4 text-brand-500" />
@@ -265,9 +301,14 @@ export default function MembersPage() {
                       {childCount > 0 ? `· Payer for ${childCount} member(s)` : "· pays for self"}
                     </span>
                   </div>
-                  <button onClick={() => openAddChild(member)} className="btn-secondary !px-3 !py-1.5 text-xs">
-                    <UserPlusIcon className="h-3.5 w-3.5" /> Add Child
-                  </button>
+                  <div className="flex gap-2">
+                    <button onClick={() => openHistory(member)} className="btn-secondary !px-3 !py-1.5 text-xs">
+                      <ClockIcon className="h-3.5 w-3.5" /> History
+                    </button>
+                    <button onClick={() => openAddChild(member)} className="btn-secondary !px-3 !py-1.5 text-xs">
+                      <UserPlusIcon className="h-3.5 w-3.5" /> Add Child
+                    </button>
+                  </div>
                 </div>
                 <table className="w-full text-sm">
                   {tableHead}
@@ -369,6 +410,62 @@ export default function MembersPage() {
               <button onClick={() => setNewCreds(null)} className="btn-primary mt-5 w-full">
                 {t("close")}
               </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Family history modal */}
+      <AnimatePresence>
+        {historyFor && (
+          <motion.div
+            className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setHistoryFor(null)}
+          >
+            <motion.div
+              onClick={(e) => e.stopPropagation()}
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              className="glass-card w-full max-w-lg p-6"
+            >
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="font-display text-lg font-bold">History — {historyFor.name}'s Family</h3>
+                <button onClick={() => setHistoryFor(null)}>
+                  <XMarkIcon className="h-5 w-5" />
+                </button>
+              </div>
+
+              {historyLoading ? (
+                <div className="skeleton h-56 rounded-xl" />
+              ) : (
+                <div className="max-h-96 space-y-1.5 overflow-y-auto pr-1">
+                  {history.length === 0 && <p className="py-6 text-center text-sm text-ink-500">{t("noDataFound")}</p>}
+                  {history.map((tx) => (
+                    <div
+                      key={tx.id}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-ink-900/10 px-3 py-2.5 text-sm dark:border-white/10"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{tx.member.name}</span>
+                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${typeColor[tx.type] ?? ""}`}>
+                            {tx.type.replace("_", " ")}
+                          </span>
+                        </div>
+                        <div className="truncate text-xs text-ink-500">{tx.description}</div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="font-semibold tabular-nums">₹{tx.amount}</div>
+                        <div className="text-xs text-ink-500">{new Date(tx.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </motion.div>
           </motion.div>
         )}

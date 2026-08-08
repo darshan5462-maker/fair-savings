@@ -2,14 +2,29 @@ import { Router } from "express";
 import { prisma } from "../config/prisma";
 import { authenticate, requireRole, requireSelfOrAdmin, AuthRequest } from "../middleware/auth";
 import { ApiError } from "../middleware/errorHandler";
-import { computeLoan, computePenalty, computeRenewal, round2 } from "../utils/finance";
+import { computeLoan, computePenalty, computeRenewal, round2, loanPaymentDueDate } from "../utils/finance";
+import { applyMissedLoanPenaltiesForAllLoans, applyMissedLoanPenalties } from "../utils/penaltyEngine";
 
 const router = Router();
 router.use(authenticate);
 
+/** Adds a computed real-world dueDate to each payment, based on the loan's issue date and the collection day setting. */
+async function withPaymentDueDates<T extends { payments: { weekNumber: number }[] }>(loan: T): Promise<T> {
+  const settings = await prisma.settings.findFirst();
+  const collectionDay = settings?.collectionDay ?? "FRIDAY";
+  const issueDate = (loan as any).issueDate as Date;
+  return {
+    ...loan,
+    payments: loan.payments.map((p) => ({ ...p, dueDate: loanPaymentDueDate(issueDate, p.weekNumber, collectionDay) })),
+  };
+}
+
 /** GET /api/loans - all loans (admin only), filterable by status */
 router.get("/", requireRole("ADMIN"), async (req, res) => {
   const { status } = req.query as Record<string, string>;
+
+  await applyMissedLoanPenaltiesForAllLoans();
+
   const loans = await prisma.loan.findMany({
     where: status ? { status: status as any } : {},
     include: { member: { select: { id: true, name: true, username: true } } },
@@ -20,16 +35,27 @@ router.get("/", requireRole("ADMIN"), async (req, res) => {
 
 /** GET /api/loans/member/:id - a member's loans (self or admin) */
 router.get("/member/:id", requireSelfOrAdmin(), async (req, res) => {
+  const existingLoans = await prisma.loan.findMany({
+    where: { memberId: req.params.id, status: { in: ["ACTIVE", "RENEWED"] } },
+    select: { id: true },
+  });
+  for (const loan of existingLoans) {
+    await applyMissedLoanPenalties(loan.id);
+  }
+
   const loans = await prisma.loan.findMany({
     where: { memberId: req.params.id },
     include: { payments: { orderBy: { weekNumber: "asc" } }, penalties: true },
     orderBy: { createdAt: "desc" },
   });
-  res.json({ success: true, data: loans });
+  const withDates = await Promise.all(loans.map(withPaymentDueDates));
+  res.json({ success: true, data: withDates });
 });
 
 /** GET /api/loans/:id - a single loan with its full EMI payment history (self or admin) */
 router.get("/:id", async (req: AuthRequest, res) => {
+  await applyMissedLoanPenalties(req.params.id);
+
   const loan = await prisma.loan.findUnique({
     where: { id: req.params.id },
     include: {
@@ -42,7 +68,8 @@ router.get("/:id", async (req: AuthRequest, res) => {
   if (req.user!.role !== "ADMIN" && req.user!.id !== loan.memberId) {
     throw new ApiError(403, "Access denied");
   }
-  res.json({ success: true, data: loan });
+  const withDates = await withPaymentDueDates(loan);
+  res.json({ success: true, data: withDates });
 });
 
 /** POST /api/loans - issue a new loan (admin only, payer/standalone members only) */

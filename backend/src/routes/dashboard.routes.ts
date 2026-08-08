@@ -1,14 +1,20 @@
 import { Router } from "express";
 import { prisma } from "../config/prisma";
 import { authenticate, requireRole, requireSelfOrAdmin } from "../middleware/auth";
+import { applyMissedSavingsPenaltiesForAllMembers, applyMissedLoanPenaltiesForAllLoans, applyMissedSavingsPenalties } from "../utils/penaltyEngine";
 
 const router = Router();
 router.use(authenticate);
 
-/** GET /api/dashboard/admin - the 8 summary cards + chart series */
+/** GET /api/dashboard/admin - the summary cards + chart series */
 router.get("/admin", requireRole("ADMIN"), async (_req, res) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+
+  // Sweep for any overdue unpaid weeks across the whole system before computing totals,
+  // so the numbers shown are always up to date - see utils/penaltyEngine.ts for why this
+  // is "on view" rather than a scheduled job.
+  await Promise.all([applyMissedSavingsPenaltiesForAllMembers(), applyMissedLoanPenaltiesForAllLoans()]);
 
   const [
     totalMembers,
@@ -18,6 +24,8 @@ router.get("/admin", requireRole("ADMIN"), async (_req, res) => {
     todaysCollectionAgg,
     totalSavingsAgg,
     totalLoanAgg,
+    totalFinesAgg,
+    allLoansForInterest,
     pendingCollections,
   ] = await Promise.all([
     prisma.member.count(),
@@ -30,8 +38,17 @@ router.get("/admin", requireRole("ADMIN"), async (_req, res) => {
     }),
     prisma.savings.aggregate({ _sum: { totalPaid: true } }),
     prisma.loan.aggregate({ _sum: { principalAmount: true } }),
+    prisma.penalty.aggregate({ _sum: { amount: true } }),
+    prisma.loan.findMany({ select: { principalAmount: true, totalRepayment: true } }),
     prisma.weeklyCollection.count({ where: { status: "PENDING" } }),
   ]);
+
+  // Interest is fixed at issuance (simple interest): totalRepayment - principalAmount,
+  // summed across every loan ever issued.
+  const totalInterest = allLoansForInterest.reduce(
+    (sum: number, l: { principalAmount: any; totalRepayment: any }) => sum + (Number(l.totalRepayment) - Number(l.principalAmount)),
+    0
+  );
 
   // Weekly collection trend - last 8 weeks
   const weeklyTrend = await prisma.weeklyCollection.groupBy({
@@ -66,6 +83,8 @@ router.get("/admin", requireRole("ADMIN"), async (_req, res) => {
         pendingCollections,
         totalSavings: Number(totalSavingsAgg._sum.totalPaid ?? 0),
         totalLoanAmount: Number(totalLoanAgg._sum.principalAmount ?? 0),
+        totalInterest: Math.round(totalInterest * 100) / 100,
+        totalFines: Number(totalFinesAgg._sum.amount ?? 0),
         defaulters,
         completedMembers,
       },
@@ -80,6 +99,8 @@ router.get("/admin", requireRole("ADMIN"), async (_req, res) => {
 
 /** GET /api/dashboard/member/:id - self summary card data */
 router.get("/member/:id", requireSelfOrAdmin(), async (req, res) => {
+  await applyMissedSavingsPenalties(req.params.id);
+
   const member = await prisma.member.findUnique({
     where: { id: req.params.id },
     include: {

@@ -14,6 +14,7 @@ interface LoanPayment {
   amountPaid: number;
   status: string;
   paymentDate: string | null;
+  dueDate: string;
 }
 
 interface Loan {
@@ -89,9 +90,9 @@ export default function MemberLoansPage() {
                       <div>
                         <div className="font-medium">Week {p.weekNumber}</div>
                         <div className="text-ink-500">
-                          {p.paymentDate
-                            ? new Date(p.paymentDate).toLocaleDateString(undefined, { day: "numeric", month: "short" })
-                            : "Not yet paid"}
+                          {p.status === "PAID" || p.status === "PARTIAL"
+                            ? p.paymentDate && `Paid ${new Date(p.paymentDate).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`
+                            : `Due ${new Date(p.dueDate).toLocaleDateString(undefined, { day: "numeric", month: "short" })}`}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">

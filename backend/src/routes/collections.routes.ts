@@ -3,6 +3,7 @@ import { prisma } from "../config/prisma";
 import { authenticate, requireRole, requireSelfOrAdmin, AuthRequest } from "../middleware/auth";
 import { ApiError } from "../middleware/errorHandler";
 import { savingsProgress, collectionDueDate } from "../utils/finance";
+import { applyMissedSavingsPenalties } from "../utils/penaltyEngine";
 
 const router = Router();
 router.use(authenticate);
@@ -24,6 +25,8 @@ router.get("/member/:id", requireSelfOrAdmin(), async (req, res) => {
  */
 router.get("/schedule/:id", requireSelfOrAdmin(), async (req, res) => {
   const weeksAhead = Math.min(52, Number(req.query.weeks) || 8);
+
+  await applyMissedSavingsPenalties(req.params.id);
 
   const member = await prisma.member.findUnique({ where: { id: req.params.id }, include: { savings: true } });
   if (!member) throw new ApiError(404, "Member not found");

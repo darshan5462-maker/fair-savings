@@ -80,3 +80,11 @@ export function collectionDueDate(joiningDate: Date, weekNumber: number, collect
   due.setDate(due.getDate() + (weekNumber - 1) * 7);
   return due;
 }
+
+/** Due date for a given loan EMI week number, anchored to the loan's issue date. */
+export function loanPaymentDueDate(issueDate: Date, weekNumber: number, collectionDay: string): Date {
+  const firstDue = nextWeekdayOnOrAfter(issueDate, collectionDay);
+  const due = new Date(firstDue);
+  due.setDate(due.getDate() + (weekNumber - 1) * 7);
+  return due;
+}

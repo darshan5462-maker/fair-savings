@@ -143,7 +143,7 @@ export default function LoginPage() {
           </button>
 
           <p className="mt-6 text-center text-xs text-ink-500 dark:text-ink-300">
-            Demo — Admin: admin / Admin@123 &nbsp;·&nbsp; Member: KD001 / Member@123
+            
           </p>
         </motion.form>
       </div>

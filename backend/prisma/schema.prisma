@@ -296,6 +296,12 @@ model Settings {
   defaultLanguage  Language @default(EN)
   defaultTheme     Theme    @default(LIGHT)
 
+  // The shared date the whole savings scheme's week-1 collection began.
+  // Nullable: falls back to a hardcoded constant in code when unset, so
+  // this can be added to an already-deployed database with no data
+  // migration required.
+  savingsStartDate DateTime?
+
   updatedAt DateTime @updatedAt
 
   @@map("settings")

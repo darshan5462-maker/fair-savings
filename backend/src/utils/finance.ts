@@ -73,9 +73,21 @@ export function nextWeekdayOnOrAfter(date: Date, weekdayName: string): Date {
   return d;
 }
 
-/** Due date for a given week number, counting weekly from the member's first collection day. */
-export function collectionDueDate(joiningDate: Date, weekNumber: number, collectionDay: string): Date {
-  const firstDue = nextWeekdayOnOrAfter(joiningDate, collectionDay);
+/**
+ * The actual date the whole savings scheme began collecting Week 1, shared
+ * across every member - NOT each member's individual `joiningDate` (which
+ * only reflects when their record happened to be created in the system,
+ * often well after the real collection already started).
+ */
+export const FALLBACK_SAVINGS_START_DATE = new Date("2026-08-07");
+
+export function resolveSavingsStartDate(settingsStartDate: Date | null | undefined): Date {
+  return settingsStartDate ?? FALLBACK_SAVINGS_START_DATE;
+}
+
+/** Due date for a given week number, counting weekly from a shared anchor date (e.g. the scheme's start date). */
+export function collectionDueDate(anchorDate: Date, weekNumber: number, collectionDay: string): Date {
+  const firstDue = nextWeekdayOnOrAfter(anchorDate, collectionDay);
   const due = new Date(firstDue);
   due.setDate(due.getDate() + (weekNumber - 1) * 7);
   return due;

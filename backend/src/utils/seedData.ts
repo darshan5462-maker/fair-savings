@@ -27,6 +27,7 @@ export async function runSeed() {
       currency: "INR",
       defaultLanguage: "EN",
       defaultTheme: "LIGHT",
+      savingsStartDate: new Date("2026-08-07"),
     },
   });
   log.push("Settings ready");

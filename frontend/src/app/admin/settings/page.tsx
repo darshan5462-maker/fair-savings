@@ -12,6 +12,7 @@ interface Settings {
   penaltyRate: number;
   loanDurationWeeks: number;
   currency: string;
+  savingsStartDate: string | null;
 }
 
 export default function SettingsPage() {
@@ -60,6 +61,19 @@ export default function SettingsPage() {
                 <option key={d}>{d}</option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase text-ink-500">Savings Scheme Start Date</label>
+            <input
+              type="date"
+              className="input-field"
+              value={settings.savingsStartDate ? settings.savingsStartDate.slice(0, 10) : ""}
+              onChange={(e) => setSettings({ ...settings, savingsStartDate: e.target.value ? new Date(e.target.value).toISOString() : null })}
+            />
+            <p className="mt-1 text-xs text-ink-500">
+              The date Week 1 collection began for everyone. Every member's weekly due dates count forward from
+              here, not from when they were individually added to the system.
+            </p>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>

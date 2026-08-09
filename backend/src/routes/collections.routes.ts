@@ -2,7 +2,7 @@ import { Router } from "express";
 import { prisma } from "../config/prisma";
 import { authenticate, requireRole, requireSelfOrAdmin, AuthRequest } from "../middleware/auth";
 import { ApiError } from "../middleware/errorHandler";
-import { savingsProgress, collectionDueDate } from "../utils/finance";
+import { savingsProgress, collectionDueDate, resolveSavingsStartDate } from "../utils/finance";
 import { applyMissedSavingsPenalties } from "../utils/penaltyEngine";
 
 const router = Router();
@@ -33,6 +33,7 @@ router.get("/schedule/:id", requireSelfOrAdmin(), async (req, res) => {
 
   const settings = await prisma.settings.findFirst();
   const collectionDay = settings?.collectionDay ?? "FRIDAY";
+  const savingsStartDate = resolveSavingsStartDate(settings?.savingsStartDate);
 
   const existing = await prisma.weeklyCollection.findMany({
     where: { memberId: member.id },
@@ -60,7 +61,7 @@ router.get("/schedule/:id", requireSelfOrAdmin(), async (req, res) => {
     if (row) {
       schedule.push({
         weekNumber: week,
-        dueDate: collectionDueDate(member.joiningDate, week, collectionDay),
+        dueDate: collectionDueDate(savingsStartDate, week, collectionDay),
         id: row.id,
         amountDue: row.amountDue,
         amountPaid: row.amountPaid,
@@ -70,7 +71,7 @@ router.get("/schedule/:id", requireSelfOrAdmin(), async (req, res) => {
     } else if (week >= startWeek) {
       schedule.push({
         weekNumber: week,
-        dueDate: collectionDueDate(member.joiningDate, week, collectionDay),
+        dueDate: collectionDueDate(savingsStartDate, week, collectionDay),
         id: null,
         amountDue: member.weeklyAmount,
         amountPaid: 0,

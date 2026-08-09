@@ -28,7 +28,11 @@ router.get("/admin", requireRole("ADMIN"), async (_req, res) => {
     allLoansForInterest,
     pendingCollections,
   ] = await Promise.all([
-    prisma.member.count(),
+    // "Considerable" members: children (who are individually tracked savers)
+    // plus standalone members who pay for themselves. A payer who has
+    // children linked isn't counted separately - they're a collector, not an
+    // individual saver in their own right; their children are the real count.
+    prisma.member.count({ where: { payerRelations: { none: {} } } }),
     prisma.loan.count({ where: { status: { in: ["ACTIVE", "RENEWED"] } } }),
     prisma.member.count({ where: { isDefaulter: true } }),
     prisma.savings.count({ where: { isSettled: true } }),

@@ -1,5 +1,5 @@
 import { prisma } from "../config/prisma";
-import { collectionDueDate, loanPaymentDueDate, computePenalty } from "./finance";
+import { collectionDueDate, loanPaymentDueDate, computePenalty, resolveSavingsStartDate } from "./finance";
 
 /**
  * There's no persistent background worker on this hosting tier (Render free
@@ -20,6 +20,7 @@ export async function applyMissedSavingsPenalties(memberId: string) {
   const settings = await prisma.settings.findFirst();
   const collectionDay = settings?.collectionDay ?? "FRIDAY";
   const penaltyRate = Number(settings?.penaltyRate ?? 1);
+  const savingsStartDate = resolveSavingsStartDate(settings?.savingsStartDate);
 
   const existing = await prisma.weeklyCollection.findMany({ where: { memberId }, select: { weekNumber: true } });
   const existingWeeks = new Set(existing.map((r: { weekNumber: number }) => r.weekNumber));
@@ -28,8 +29,13 @@ export async function applyMissedSavingsPenalties(memberId: string) {
 
   for (let week = 1; week <= member.savingsCycleWeeks; week++) {
     if (existingWeeks.has(week)) continue;
-    const due = collectionDueDate(member.joiningDate, week, collectionDay);
+    const due = collectionDueDate(savingsStartDate, week, collectionDay);
     if (due >= today) break; // not due yet, and every later week is due even later
+
+    // Week 1 is exempt from automatic penalties - the scheme's real start
+    // date was corrected after the fact, so nobody should be auto-fined for
+    // a due date that only became "already passed" because of that fix.
+    if (week === 1) continue;
 
     const amountDue = Number(member.weeklyAmount);
 

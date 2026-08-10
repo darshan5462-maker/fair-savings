@@ -111,6 +111,11 @@ export default function MemberDashboard() {
   const familyFine = children.reduce((s, c) => s + c.penalties.reduce((fs, p) => fs + Number(p.amount), 0), 0);
   // The family's cycle isn't done until its last-finishing child is done.
   const familyRemainingWeeks = children.length > 0 ? Math.max(...children.map((c) => c.savings?.weeksRemaining ?? c.savingsCycleWeeks)) : 0;
+  // The family's current week number, for labeling upcoming dates - based on
+  // whichever child is furthest behind, so nobody's "Week 2" gets mislabeled
+  // as "Week 1" just because a sibling paid ahead of them.
+  const familyStartWeek =
+    children.length > 0 ? Math.min(...children.map((c) => c.savings?.weeksCompleted ?? 0)) + 1 : 1;
   // Total collected per Friday, from whichever children are still actively saving.
   const familyWeeklyTotal = children.reduce((s, c) => s + (Number(c.savings?.weeksRemaining ?? 0) > 0 ? Number(c.weeklyAmount) : 0), 0);
 
@@ -183,7 +188,7 @@ export default function MemberDashboard() {
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   {familyUpcoming.map((date, i) => (
                     <div key={i} className="rounded-xl border border-ink-900/10 p-3 text-center dark:border-white/10">
-                      <div className="text-xs text-ink-500">Collection {i + 1}</div>
+                      <div className="text-xs text-ink-500">Week {familyStartWeek + i}</div>
                       <div className="mt-1 font-display font-semibold">
                         {new Date(date).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
                       </div>

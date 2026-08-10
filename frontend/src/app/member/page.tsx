@@ -89,7 +89,9 @@ export default function MemberDashboard() {
       api.get(historyUrl).then((histRes) => setHistory(histRes.data.data));
 
       if (isPayer) {
-        api.get("/collections/upcoming-dates", { params: { weeks: 4 } }).then((res) => setFamilyUpcoming(res.data.data));
+        const kids = memberData.payerRelations?.map((r) => r.child) ?? [];
+        const startWeek = kids.length > 0 ? Math.min(...kids.map((c) => c.savings?.weeksCompleted ?? 0)) + 1 : 1;
+        api.get("/collections/upcoming-dates", { params: { startWeek, weeks: 4 } }).then((res) => setFamilyUpcoming(res.data.data));
       } else {
         api.get(`/collections/schedule/${user.id}`, { params: { weeks: 4 } }).then((res) => setSchedule(res.data.data));
       }

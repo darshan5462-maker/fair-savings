@@ -2,7 +2,7 @@ import { Router } from "express";
 import { prisma } from "../config/prisma";
 import { authenticate, requireRole, requireSelfOrAdmin, AuthRequest } from "../middleware/auth";
 import { ApiError } from "../middleware/errorHandler";
-import { savingsProgress, collectionDueDate, resolveSavingsStartDate } from "../utils/finance";
+import { savingsProgress, collectionDueDate, resolveSavingsStartDate, nextWeekdayOnOrAfter } from "../utils/finance";
 import { applyMissedSavingsPenalties } from "../utils/penaltyEngine";
 
 const router = Router();
@@ -82,6 +82,40 @@ router.get("/schedule/:id", requireSelfOrAdmin(), async (req, res) => {
   }
 
   res.json({ success: true, data: schedule });
+});
+
+/**
+ * GET /api/collections/upcoming-dates?weeks=4
+ * The next N upcoming collection dates from today, purely calendar-based
+ * off the collection day + scheme start date - NOT tied to any single
+ * member's personal week-number progress. Useful for a family payer, where
+ * each linked child may be at a slightly different week count but the
+ * actual Friday collection dates are shared across the whole family.
+ */
+router.get("/upcoming-dates", async (req, res) => {
+  const weeksAhead = Math.min(52, Number(req.query.weeks) || 4);
+
+  const settings = await prisma.settings.findFirst();
+  const collectionDay = settings?.collectionDay ?? "FRIDAY";
+  const startDate = resolveSavingsStartDate(settings?.savingsStartDate);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  let date = nextWeekdayOnOrAfter(startDate, collectionDay);
+  while (date < today) {
+    date = new Date(date);
+    date.setDate(date.getDate() + 7);
+  }
+
+  const dates: Date[] = [];
+  for (let i = 0; i < weeksAhead; i++) {
+    dates.push(new Date(date));
+    date = new Date(date);
+    date.setDate(date.getDate() + 7);
+  }
+
+  res.json({ success: true, data: dates });
 });
 
 /**

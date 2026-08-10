@@ -27,6 +27,7 @@ interface ChildMember {
   id: string;
   name: string;
   username: string;
+  weeklyAmount: number;
   savingsCycleWeeks: number;
   savings?: Savings;
   loans: { id: string; remainingAmount: number }[];
@@ -52,6 +53,10 @@ interface ScheduleRow {
   amountDue: number;
 }
 
+interface UpcomingDate {
+  date: string;
+}
+
 interface Transaction {
   id: string;
   type: string;
@@ -75,6 +80,7 @@ export default function MemberDashboard() {
   const { t } = useLanguage();
   const [data, setData] = useState<MemberData | null>(null);
   const [schedule, setSchedule] = useState<ScheduleRow[]>([]);
+  const [familyUpcoming, setFamilyUpcoming] = useState<UpcomingDate[]>([]);
   const [history, setHistory] = useState<Transaction[]>([]);
 
   useEffect(() => {
@@ -85,8 +91,13 @@ export default function MemberDashboard() {
       const isPayer = (memberData?.payerRelations?.length ?? 0) > 0;
       const historyUrl = isPayer ? `/transactions/family/${user.id}` : `/transactions/member/${user.id}`;
       api.get(historyUrl).then((histRes) => setHistory(histRes.data.data));
+
+      if (isPayer) {
+        api.get("/collections/upcoming-dates", { params: { weeks: 4 } }).then((res) => setFamilyUpcoming(res.data.data));
+      } else {
+        api.get(`/collections/schedule/${user.id}`, { params: { weeks: 4 } }).then((res) => setSchedule(res.data.data));
+      }
     });
-    api.get(`/collections/schedule/${user.id}`, { params: { weeks: 4 } }).then((res) => setSchedule(res.data.data));
   }, [user]);
 
   const isFamilyPayer = (data?.payerRelations?.length ?? 0) > 0;
@@ -102,6 +113,10 @@ export default function MemberDashboard() {
   const familyTotalSavings = children.reduce((s, c) => s + Number(c.savings?.totalPaid ?? 0), 0);
   const familyLoanBalance = children.reduce((s, c) => s + c.loans.reduce((ls, l) => ls + Number(l.remainingAmount), 0), 0);
   const familyFine = children.reduce((s, c) => s + c.penalties.reduce((fs, p) => fs + Number(p.amount), 0), 0);
+  // The family's cycle isn't done until its last-finishing child is done.
+  const familyRemainingWeeks = children.length > 0 ? Math.max(...children.map((c) => c.savings?.weeksRemaining ?? c.savingsCycleWeeks)) : 0;
+  // Total collected per Friday, from whichever children are still actively saving.
+  const familyWeeklyTotal = children.reduce((s, c) => s + (Number(c.savings?.weeksRemaining ?? 0) > 0 ? Number(c.weeklyAmount) : 0), 0);
 
   return (
     <>
@@ -109,9 +124,10 @@ export default function MemberDashboard() {
       <main className="space-y-6 p-6">
         {isFamilyPayer ? (
           <>
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
               <StatCard label="Family Savings" value={`₹${familyTotalSavings}`} icon={WalletIcon} tone="success" />
               <StatCard label="Family Members" value={children.length} icon={UsersIcon} tone="brand" delay={0.05} />
+              <StatCard label="Remaining Weeks" value={familyRemainingWeeks} icon={CalendarIcon} tone="brand" delay={0.08} />
               <StatCard label="Family Loan Balance" value={`₹${familyLoanBalance}`} icon={CreditCardIcon} tone="brand" delay={0.1} />
               <StatCard label="Family Fines" value={`₹${familyFine}`} icon={ExclamationTriangleIcon} tone="danger" delay={0.15} />
             </div>
@@ -156,12 +172,30 @@ export default function MemberDashboard() {
                       </div>
                       <p className="mt-1 text-xs text-ink-500">
                         {child.savings?.weeksCompleted ?? 0} / {child.savingsCycleWeeks} weeks · {childProgress}% complete
+                        {(child.savings?.weeksRemaining ?? 0) > 0 && ` · ${child.savings?.weeksRemaining} weeks remaining`}
                       </p>
                     </div>
                   );
                 })}
               </div>
             </div>
+
+            {familyUpcoming.length > 0 && familyWeeklyTotal > 0 && (
+              <div className="glass-card p-6">
+                <h3 className="mb-1 font-display font-semibold">Upcoming Collection Dates</h3>
+                <p className="mb-3 text-xs text-ink-500">Total to collect from your family each Friday, across all still-active members.</p>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {familyUpcoming.map((row, i) => (
+                    <div key={i} className="rounded-xl border border-ink-900/10 p-3 text-center dark:border-white/10">
+                      <div className="font-display font-semibold">
+                        {new Date(row.date).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                      </div>
+                      <div className="mt-1 text-xs text-ink-500">₹{familyWeeklyTotal} total</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         ) : (
           <>

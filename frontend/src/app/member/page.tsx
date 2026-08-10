@@ -53,10 +53,6 @@ interface ScheduleRow {
   amountDue: number;
 }
 
-interface UpcomingDate {
-  date: string;
-}
-
 interface Transaction {
   id: string;
   type: string;
@@ -80,7 +76,7 @@ export default function MemberDashboard() {
   const { t } = useLanguage();
   const [data, setData] = useState<MemberData | null>(null);
   const [schedule, setSchedule] = useState<ScheduleRow[]>([]);
-  const [familyUpcoming, setFamilyUpcoming] = useState<UpcomingDate[]>([]);
+  const [familyUpcoming, setFamilyUpcoming] = useState<string[]>([]);
   const [history, setHistory] = useState<Transaction[]>([]);
 
   useEffect(() => {
@@ -185,12 +181,13 @@ export default function MemberDashboard() {
                 <h3 className="mb-1 font-display font-semibold">Upcoming Collection Dates</h3>
                 <p className="mb-3 text-xs text-ink-500">Total to collect from your family each Friday, across all still-active members.</p>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {familyUpcoming.map((row, i) => (
+                  {familyUpcoming.map((date, i) => (
                     <div key={i} className="rounded-xl border border-ink-900/10 p-3 text-center dark:border-white/10">
-                      <div className="font-display font-semibold">
-                        {new Date(row.date).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                      <div className="text-xs text-ink-500">Collection {i + 1}</div>
+                      <div className="mt-1 font-display font-semibold">
+                        {new Date(date).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
                       </div>
-                      <div className="mt-1 text-xs text-ink-500">₹{familyWeeklyTotal} total</div>
+                      <div className="mt-1 text-xs text-ink-500">₹{familyWeeklyTotal}</div>
                     </div>
                   ))}
                 </div>

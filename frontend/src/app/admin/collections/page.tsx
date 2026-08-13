@@ -13,6 +13,7 @@ interface ChildMember {
   name: string;
   username: string;
   weeklyAmount: number;
+  savings?: { weeksCompleted: number };
 }
 
 interface Payer {
@@ -20,6 +21,7 @@ interface Payer {
   name: string;
   username: string;
   weeklyAmount: number;
+  savings?: { weeksCompleted: number };
   payerRelations?: { child: ChildMember }[];
 }
 
@@ -203,6 +205,9 @@ export default function CollectionsPage() {
                               self
                             </span>
                           )}
+                          <span className="ml-1.5 rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-semibold text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
+                            Week {(child.savings?.weeksCompleted ?? 0) + 1}
+                          </span>
                         </div>
                         <div className="text-xs text-ink-500">{child.username}</div>
                       </div>

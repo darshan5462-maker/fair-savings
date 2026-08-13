@@ -10,6 +10,15 @@ const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
 export const metadata: Metadata = {
   title: "Fair Savings — Family Weekly Savings & Loan Management",
   description: "A premium fintech-style dashboard for managing family weekly savings and loans.",
+  manifest: "/manifest.json",
+  icons: {
+    icon: "/icon-192.png",
+    apple: "/icon-192.png",
+  },
+};
+
+export const viewport = {
+  themeColor: "#7C5CF5",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

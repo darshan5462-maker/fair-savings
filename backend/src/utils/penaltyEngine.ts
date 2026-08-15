@@ -14,8 +14,17 @@ import { collectionDueDate, loanPaymentDueDate, computePenalty, resolveSavingsSt
 
 /** Scans one member's weekly savings schedule for overdue unpaid weeks and applies penalties. */
 export async function applyMissedSavingsPenalties(memberId: string) {
-  const member = await prisma.member.findUnique({ where: { id: memberId }, include: { savings: true } });
+  const member = await prisma.member.findUnique({
+    where: { id: memberId },
+    include: { savings: true, payerRelations: { select: { id: true } } },
+  });
   if (!member || !member.savings || member.savings.isSettled) return;
+
+  // A member who is themself a payer for linked children never has
+  // individual savings of their own to miss - only their children do.
+  // Auto-penalizing the family head for their own "unpaid" week was a bug:
+  // that week never existed for them to pay in the first place.
+  if (member.payerRelations.length > 0) return;
 
   const settings = await prisma.settings.findFirst();
   const collectionDay = settings?.collectionDay ?? "FRIDAY";
@@ -25,7 +34,14 @@ export async function applyMissedSavingsPenalties(memberId: string) {
   const existing = await prisma.weeklyCollection.findMany({ where: { memberId }, select: { weekNumber: true } });
   const existingWeeks = new Set(existing.map((r: { weekNumber: number }) => r.weekNumber));
 
+  // Normalized to midnight so a payment made anytime ON the due date itself
+  // is never mistaken for "already overdue" - without this, the moment any
+  // time passed midnight on the due date (before anyone even had a chance
+  // to collect that day), the week would incorrectly fire as missed.
   const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  let penalized = false;
 
   for (let week = 1; week <= member.savingsCycleWeeks; week++) {
     if (existingWeeks.has(week)) continue;
@@ -47,8 +63,7 @@ export async function applyMissedSavingsPenalties(memberId: string) {
     const penalty = await prisma.penalty.create({
       data: { memberId, reason: `Missed savings - week ${week}`, amount: penaltyAmount },
     });
-
-    await prisma.member.update({ where: { id: memberId }, data: { isDefaulter: true } });
+    penalized = true;
 
     await prisma.transaction.create({
       data: {
@@ -60,6 +75,10 @@ export async function applyMissedSavingsPenalties(memberId: string) {
         performedBy: "SYSTEM",
       },
     });
+  }
+
+  if (penalized) {
+    await prisma.member.update({ where: { id: memberId }, data: { isDefaulter: true } });
   }
 }
 
@@ -77,6 +96,7 @@ export async function applyMissedLoanPenalties(loanId: string) {
   const penaltyRate = Number(settings?.penaltyRate ?? 1);
 
   const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
   for (const payment of loan.payments) {
     if (payment.status !== "PENDING") continue;
@@ -121,9 +141,12 @@ export async function applyMissedLoanPenaltiesForAllLoans() {
   }
 }
 
-/** Runs the savings penalty check across every member. Used by the admin dashboard. */
+/** Runs the savings penalty check across every individually-payable member (excludes payers-with-children, who have no savings of their own). */
 export async function applyMissedSavingsPenaltiesForAllMembers() {
-  const members = await prisma.member.findMany({ where: { isActive: true }, select: { id: true } });
+  const members = await prisma.member.findMany({
+    where: { isActive: true, payerRelations: { none: {} } },
+    select: { id: true },
+  });
   for (const member of members) {
     await applyMissedSavingsPenalties(member.id);
   }

@@ -16,6 +16,7 @@ import {
   Cog6ToothIcon,
   ArrowLeftStartOnRectangleIcon,
   XMarkIcon,
+  GiftIcon,
 } from "@heroicons/react/24/outline";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/i18n/LanguageContext";
@@ -36,6 +37,7 @@ const adminNav = [
 const memberNav = [
   { href: "/member", icon: Squares2X2Icon, key: "dashboard" as const },
   { href: "/member/loans", icon: CreditCardIcon, key: "loans" as const },
+  { href: "/member/loan-giving", icon: GiftIcon, key: "loanGiving" as const },
   { href: "/member/notifications", icon: BellIcon, key: "notifications" as const },
 ];
 

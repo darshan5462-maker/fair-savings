@@ -27,6 +27,7 @@ const adminNav = [
   { href: "/admin/members", icon: UsersIcon, key: "members" as const },
   { href: "/admin/collections", icon: BanknotesIcon, key: "weeklyCollections" as const },
   { href: "/admin/loans", icon: CreditCardIcon, key: "loans" as const },
+  { href: "/admin/loan-giving", icon: GiftIcon, key: "loanGiving" as const },
   { href: "/admin/penalties", icon: ExclamationTriangleIcon, key: "penalties" as const },
   { href: "/admin/reports", icon: DocumentChartBarIcon, key: "reports" as const },
   { href: "/admin/notifications", icon: BellIcon, key: "notifications" as const },

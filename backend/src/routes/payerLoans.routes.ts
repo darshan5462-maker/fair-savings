@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../config/prisma";
-import { authenticate, AuthRequest } from "../middleware/auth";
+import { authenticate, requireRole, AuthRequest } from "../middleware/auth";
 import { ApiError } from "../middleware/errorHandler";
 import { generateRandomPassword, hashPassword, nextUsernameFromList } from "../utils/auth";
 
@@ -40,6 +40,19 @@ async function loadLoanWithAccessCheck(req: AuthRequest, loanId: string) {
 
   return loan;
 }
+
+/** GET /api/payer-loans - every loan across every payer (admin only) - system-wide overview */
+router.get("/", requireRole("ADMIN"), async (_req, res) => {
+  const loans = await prisma.payerLoan.findMany({
+    include: {
+      payer: { select: { id: true, name: true, username: true } },
+      borrower: { select: { id: true, name: true, username: true, phone: true } },
+      payments: { orderBy: { paymentDate: "desc" } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  res.json({ success: true, data: loans });
+});
 
 /** GET /api/payer-loans/payer/:payerId - every loan a payer has given (self or admin) */
 router.get("/payer/:payerId", async (req: AuthRequest, res) => {

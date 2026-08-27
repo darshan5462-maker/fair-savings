@@ -8,7 +8,6 @@ import { LockClosedIcon, UserIcon, SunIcon, MoonIcon, LanguageIcon } from "@hero
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useLanguage } from "@/i18n/LanguageContext";
-import { homeRouteForRole } from "@/lib/roleRoute";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -25,7 +24,7 @@ export default function LoginPage() {
     try {
       const user = await login(username, password);
       toast.success(`Welcome, ${user.name}`);
-      router.push(homeRouteForRole(user.role));
+      router.push(user.role === "ADMIN" ? "/admin" : "/member");
     } catch (err: any) {
       toast.error(err?.response?.data?.message || "Invalid username or password");
     } finally {

@@ -16,7 +16,6 @@ import {
   Cog6ToothIcon,
   ArrowLeftStartOnRectangleIcon,
   XMarkIcon,
-  GiftIcon,
 } from "@heroicons/react/24/outline";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/i18n/LanguageContext";
@@ -27,7 +26,6 @@ const adminNav = [
   { href: "/admin/members", icon: UsersIcon, key: "members" as const },
   { href: "/admin/collections", icon: BanknotesIcon, key: "weeklyCollections" as const },
   { href: "/admin/loans", icon: CreditCardIcon, key: "loans" as const },
-  { href: "/admin/loan-giving", icon: GiftIcon, key: "loanGiving" as const },
   { href: "/admin/penalties", icon: ExclamationTriangleIcon, key: "penalties" as const },
   { href: "/admin/reports", icon: DocumentChartBarIcon, key: "reports" as const },
   { href: "/admin/notifications", icon: BellIcon, key: "notifications" as const },
@@ -38,7 +36,6 @@ const adminNav = [
 const memberNav = [
   { href: "/member", icon: Squares2X2Icon, key: "dashboard" as const },
   { href: "/member/loans", icon: CreditCardIcon, key: "loans" as const },
-  { href: "/member/loan-giving", icon: GiftIcon, key: "loanGiving" as const },
   { href: "/member/notifications", icon: BellIcon, key: "notifications" as const },
 ];
 

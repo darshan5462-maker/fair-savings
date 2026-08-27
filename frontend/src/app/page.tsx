@@ -3,7 +3,6 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
-import { homeRouteForRole } from "@/lib/roleRoute";
 
 export default function Home() {
   const { user, loading } = useAuth();
@@ -12,7 +11,7 @@ export default function Home() {
   useEffect(() => {
     if (loading) return;
     if (!user) return router.replace("/login");
-    router.replace(homeRouteForRole(user.role));
+    router.replace(user.role === "ADMIN" ? "/admin" : "/member");
   }, [user, loading, router]);
 
   return (

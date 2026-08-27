@@ -9,8 +9,8 @@ const router = Router();
 
 /**
  * POST /api/auth/login
- * Single login endpoint for Admin, Member, and outside loan Borrowers.
- * Tries Admin table first, then Member table, then LoanBorrower table.
+ * Single login endpoint for both Admin and Member.
+ * Tries Admin table first, then Member table.
  */
 router.post(
   "/login",
@@ -42,16 +42,6 @@ router.post(
       });
     }
 
-    const borrower = await prisma.loanBorrower.findUnique({ where: { username } });
-    if (borrower && (await comparePassword(password, borrower.passwordHash))) {
-      const token = signToken({ id: borrower.id, role: "BORROWER", username: borrower.username });
-      return res.json({
-        success: true,
-        token,
-        user: { id: borrower.id, name: borrower.name, username: borrower.username, role: "BORROWER" },
-      });
-    }
-
     throw new ApiError(401, "Invalid username or password");
   }
 );
@@ -61,10 +51,6 @@ router.get("/me", authenticate, async (req: AuthRequest, res) => {
   if (req.user!.role === "ADMIN") {
     const admin = await prisma.admin.findUnique({ where: { id: req.user!.id } });
     return res.json({ success: true, user: { ...admin, passwordHash: undefined, role: "ADMIN" } });
-  }
-  if (req.user!.role === "BORROWER") {
-    const borrower = await prisma.loanBorrower.findUnique({ where: { id: req.user!.id } });
-    return res.json({ success: true, user: { ...borrower, passwordHash: undefined, role: "BORROWER" } });
   }
   const member = await prisma.member.findUnique({ where: { id: req.user!.id } });
   return res.json({ success: true, user: { ...member, passwordHash: undefined, role: "MEMBER" } });

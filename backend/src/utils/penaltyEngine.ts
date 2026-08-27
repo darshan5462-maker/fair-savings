@@ -10,23 +10,10 @@ import { collectionDueDate, loanPaymentDueDate, computePenalty, resolveSavingsSt
  * apply the 1% penalty right then. From the user's perspective this behaves
  * the same as an automatic Friday-night job - the data is always correct
  * "as of now" the moment anyone looks at it.
- *
- * PERFORMANCE NOTE: the bulk sweeps below fetch Settings ONCE and run every
- * member/loan check concurrently (Promise.all), not one at a time. Doing
- * this sequentially with a fresh Settings query per member turned a 12+
- * member dashboard load into dozens of back-to-back round trips against a
- * serverless Postgres connection - which is exactly what was making the
- * admin dashboard slow to open.
  */
 
-type SettingsRow = {
-  collectionDay: string;
-  penaltyRate: any;
-  savingsStartDate: Date | null;
-} | null;
-
 /** Scans one member's weekly savings schedule for overdue unpaid weeks and applies penalties. */
-export async function applyMissedSavingsPenalties(memberId: string, settings?: SettingsRow) {
+export async function applyMissedSavingsPenalties(memberId: string) {
   const member = await prisma.member.findUnique({
     where: { id: memberId },
     include: { savings: true, payerRelations: { select: { id: true } } },
@@ -39,10 +26,10 @@ export async function applyMissedSavingsPenalties(memberId: string, settings?: S
   // that week never existed for them to pay in the first place.
   if (member.payerRelations.length > 0) return;
 
-  const resolvedSettings = settings !== undefined ? settings : await prisma.settings.findFirst();
-  const collectionDay = resolvedSettings?.collectionDay ?? "FRIDAY";
-  const penaltyRate = Number(resolvedSettings?.penaltyRate ?? 1);
-  const savingsStartDate = resolveSavingsStartDate(resolvedSettings?.savingsStartDate);
+  const settings = await prisma.settings.findFirst();
+  const collectionDay = settings?.collectionDay ?? "FRIDAY";
+  const penaltyRate = Number(settings?.penaltyRate ?? 1);
+  const savingsStartDate = resolveSavingsStartDate(settings?.savingsStartDate);
 
   const existing = await prisma.weeklyCollection.findMany({ where: { memberId }, select: { weekNumber: true } });
   const existingWeeks = new Set(existing.map((r: { weekNumber: number }) => r.weekNumber));
@@ -96,7 +83,7 @@ export async function applyMissedSavingsPenalties(memberId: string, settings?: S
 }
 
 /** Scans one loan's EMI schedule for overdue unpaid weeks and applies penalties. */
-export async function applyMissedLoanPenalties(loanId: string, settings?: SettingsRow) {
+export async function applyMissedLoanPenalties(loanId: string) {
   const loan = await prisma.loan.findUnique({
     where: { id: loanId },
     include: { payments: { orderBy: { weekNumber: "asc" } } },
@@ -104,9 +91,9 @@ export async function applyMissedLoanPenalties(loanId: string, settings?: Settin
   if (!loan) return;
   if (loan.status !== "ACTIVE" && loan.status !== "RENEWED") return;
 
-  const resolvedSettings = settings !== undefined ? settings : await prisma.settings.findFirst();
-  const collectionDay = resolvedSettings?.collectionDay ?? "FRIDAY";
-  const penaltyRate = Number(resolvedSettings?.penaltyRate ?? 1);
+  const settings = await prisma.settings.findFirst();
+  const collectionDay = settings?.collectionDay ?? "FRIDAY";
+  const penaltyRate = Number(settings?.penaltyRate ?? 1);
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -143,20 +130,24 @@ export async function applyMissedLoanPenalties(loanId: string, settings?: Settin
   }
 }
 
-/** Runs the loan penalty check across every currently active/renewed loan, concurrently. */
+/** Runs the loan penalty check across every currently active/renewed loan. Used by admin-wide views. */
 export async function applyMissedLoanPenaltiesForAllLoans() {
-  const [settings, activeLoans] = await Promise.all([
-    prisma.settings.findFirst(),
-    prisma.loan.findMany({ where: { status: { in: ["ACTIVE", "RENEWED"] } }, select: { id: true } }),
-  ]);
-  await Promise.all(activeLoans.map((loan: { id: string }) => applyMissedLoanPenalties(loan.id, settings)));
+  const activeLoans = await prisma.loan.findMany({
+    where: { status: { in: ["ACTIVE", "RENEWED"] } },
+    select: { id: true },
+  });
+  for (const loan of activeLoans) {
+    await applyMissedLoanPenalties(loan.id);
+  }
 }
 
-/** Runs the savings penalty check across every individually-payable member, concurrently (excludes payers-with-children, who have no savings of their own). */
+/** Runs the savings penalty check across every individually-payable member (excludes payers-with-children, who have no savings of their own). */
 export async function applyMissedSavingsPenaltiesForAllMembers() {
-  const [settings, members] = await Promise.all([
-    prisma.settings.findFirst(),
-    prisma.member.findMany({ where: { isActive: true, payerRelations: { none: {} } }, select: { id: true } }),
-  ]);
-  await Promise.all(members.map((member: { id: string }) => applyMissedSavingsPenalties(member.id, settings)));
+  const members = await prisma.member.findMany({
+    where: { isActive: true, payerRelations: { none: {} } },
+    select: { id: true },
+  });
+  for (const member of members) {
+    await applyMissedSavingsPenalties(member.id);
+  }
 }

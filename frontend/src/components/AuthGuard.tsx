@@ -3,15 +3,16 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { homeRouteForRole } from "@/lib/roleRoute";
 
-export function AuthGuard({ role, children }: { role: "ADMIN" | "MEMBER"; children: React.ReactNode }) {
+export function AuthGuard({ role, children }: { role: "ADMIN" | "MEMBER" | "BORROWER"; children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (loading) return;
     if (!user) return router.replace("/login");
-    if (user.role !== role) return router.replace(user.role === "ADMIN" ? "/admin" : "/member");
+    if (user.role !== role) return router.replace(homeRouteForRole(user.role));
   }, [user, loading, role, router]);
 
   if (loading || !user || user.role !== role) {

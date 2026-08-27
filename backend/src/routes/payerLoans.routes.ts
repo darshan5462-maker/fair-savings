@@ -13,9 +13,15 @@ router.use(authenticate);
  * (SELF - just a loan record, no new account of any kind) or to someone
  * outside the savings scheme entirely (OUTSIDE - gets a login-only
  * LoanBorrower account with no savings, no family link, no Member row).
+ *
+ * ACCESS MODEL: only the admin creates loans, records payments, deletes
+ * loans, and resets a borrower's password. A payer (MEMBER role) can only
+ * VIEW their own loan-giving data - no create/pay/delete actions. An
+ * outside borrower (BORROWER role) can view AND pay their own loan, since
+ * that's the whole point of their login.
  */
 
-async function assertCanActAsPayer(req: AuthRequest, payerId: string) {
+async function assertCanView(req: AuthRequest, payerId: string) {
   if (req.user!.role === "ADMIN") return;
   if (req.user!.role === "MEMBER" && req.user!.id === payerId) return;
   throw new ApiError(403, "Access denied");
@@ -32,11 +38,11 @@ async function loadLoanWithAccessCheck(req: AuthRequest, loanId: string) {
   });
   if (!loan) throw new ApiError(404, "Loan not found");
 
-  const isOwner =
+  const canView =
     req.user!.role === "ADMIN" ||
     (req.user!.role === "MEMBER" && req.user!.id === loan.payerId) ||
     (req.user!.role === "BORROWER" && req.user!.id === loan.borrowerId);
-  if (!isOwner) throw new ApiError(403, "Access denied");
+  if (!canView) throw new ApiError(403, "Access denied");
 
   return loan;
 }
@@ -54,9 +60,9 @@ router.get("/", requireRole("ADMIN"), async (_req, res) => {
   res.json({ success: true, data: loans });
 });
 
-/** GET /api/payer-loans/payer/:payerId - every loan a payer has given (self or admin) */
+/** GET /api/payer-loans/payer/:payerId - every loan a payer has given (read-only for the payer themself, or admin) */
 router.get("/payer/:payerId", async (req: AuthRequest, res) => {
-  await assertCanActAsPayer(req, req.params.payerId);
+  await assertCanView(req, req.params.payerId);
 
   const loans = await prisma.payerLoan.findMany({
     where: { payerId: req.params.payerId },
@@ -84,14 +90,14 @@ router.get("/me", async (req: AuthRequest, res) => {
   res.json({ success: true, data: loans });
 });
 
-/** GET /api/payer-loans/:id - single loan detail (payer, borrower, or admin) */
+/** GET /api/payer-loans/:id - single loan detail (payer view-only, borrower, or admin) */
 router.get("/:id", async (req: AuthRequest, res) => {
   const loan = await loadLoanWithAccessCheck(req, req.params.id);
   res.json({ success: true, data: loan });
 });
 
 /**
- * POST /api/payer-loans
+ * POST /api/payer-loans (admin only)
  * Creates a loan. body: { payerId, borrowerType: "SELF" | "OUTSIDE",
  * principalAmount, borrower?: { name, phone } }
  *
@@ -103,7 +109,7 @@ router.get("/:id", async (req: AuthRequest, res) => {
  * The outside person never becomes a Member - no savings account, no
  * family link, no access to anything but their own loan.
  */
-router.post("/", async (req: AuthRequest, res) => {
+router.post("/", requireRole("ADMIN"), async (req: AuthRequest, res) => {
   const { payerId, borrowerType, principalAmount, borrower } = req.body;
 
   if (!payerId || !borrowerType || !principalAmount) {
@@ -112,8 +118,6 @@ router.post("/", async (req: AuthRequest, res) => {
   if (borrowerType !== "SELF" && borrowerType !== "OUTSIDE") {
     throw new ApiError(400, 'borrowerType must be "SELF" or "OUTSIDE"');
   }
-
-  await assertCanActAsPayer(req, payerId);
 
   const payer = await prisma.member.findUnique({ where: { id: payerId } });
   if (!payer) throw new ApiError(404, "Payer not found");
@@ -170,11 +174,14 @@ router.post("/", async (req: AuthRequest, res) => {
 
 /**
  * POST /api/payer-loans/:id/pay
- * Records a payment against a loan. Either the payer (recording cash they
- * received) or the borrower themself (if self-recording) or admin can do
- * this. Updates paid/remaining and flips status to COMPLETED at ₹0 left.
+ * Records a payment. Admin can always do this; a borrower can record their
+ * own payment. A payer (MEMBER) cannot - they can only view.
  */
 router.post("/:id/pay", async (req: AuthRequest, res) => {
+  if (req.user!.role === "MEMBER") {
+    throw new ApiError(403, "Only the admin or the borrower can record a payment on this loan");
+  }
+
   const { amount } = req.body;
   const paid = Number(amount);
   if (!(paid > 0)) throw new ApiError(400, "amount must be greater than 0");
@@ -203,6 +210,47 @@ router.post("/:id/pay", async (req: AuthRequest, res) => {
   });
 
   res.json({ success: true, data: updated });
+});
+
+/**
+ * DELETE /api/payer-loans/:id (admin only)
+ * Removes the loan and its payment history. If the loan was to an outside
+ * borrower and that was their only loan, their login is removed too -
+ * there's no reason to leave a dangling login with nothing to view.
+ */
+router.delete("/:id", requireRole("ADMIN"), async (req, res) => {
+  const loan = await prisma.payerLoan.findUnique({ where: { id: req.params.id } });
+  if (!loan) throw new ApiError(404, "Loan not found");
+
+  await prisma.payerLoanPayment.deleteMany({ where: { loanId: loan.id } });
+  await prisma.payerLoan.delete({ where: { id: loan.id } });
+
+  if (loan.borrowerId) {
+    const remaining = await prisma.payerLoan.count({ where: { borrowerId: loan.borrowerId } });
+    if (remaining === 0) {
+      await prisma.loanBorrower.delete({ where: { id: loan.borrowerId } });
+    }
+  }
+
+  res.json({ success: true, message: "Loan deleted" });
+});
+
+/**
+ * POST /api/payer-loans/:id/reset-borrower-password (admin only)
+ * Regenerates the login password for an outside borrower and returns it
+ * once - the only way to recover access if the original credentials are
+ * lost, since passwords are hashed and can't be shown again otherwise.
+ */
+router.post("/:id/reset-borrower-password", requireRole("ADMIN"), async (req, res) => {
+  const loan = await prisma.payerLoan.findUnique({ where: { id: req.params.id } });
+  if (!loan) throw new ApiError(404, "Loan not found");
+  if (!loan.borrowerId) throw new ApiError(400, "This loan has no outside borrower login to reset");
+
+  const rawPassword = generateRandomPassword();
+  const passwordHash = await hashPassword(rawPassword);
+  const borrower = await prisma.loanBorrower.update({ where: { id: loan.borrowerId }, data: { passwordHash } });
+
+  res.json({ success: true, credentials: { username: borrower.username, password: rawPassword } });
 });
 
 export default router;

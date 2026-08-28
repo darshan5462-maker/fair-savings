@@ -4,6 +4,7 @@ import { authenticate, requireRole, requireSelfOrAdmin, AuthRequest } from "../m
 import { ApiError } from "../middleware/errorHandler";
 import { computeLoan, computePenalty, computeRenewal, round2, loanPaymentDueDate } from "../utils/finance";
 import { applyMissedLoanPenaltiesForAllLoans, applyMissedLoanPenalties } from "../utils/penaltyEngine";
+import { generateRandomPassword, hashPassword, nextUsernameFromList } from "../utils/auth";
 
 const router = Router();
 router.use(authenticate);
@@ -19,6 +20,34 @@ async function withPaymentDueDates<T extends { payments: { weekNumber: number }[
   };
 }
 
+/** GET /api/loans/next-borrower-id - returns the next available LB username (admin only) */
+router.get("/next-borrower-id", requireRole("ADMIN"), async (_req, res) => {
+  const existing = await prisma.loanBorrower.findMany({ select: { username: true } });
+  const nextId = nextUsernameFromList(
+    existing.map((b) => b.username),
+    "LB"
+  );
+  res.json({ success: true, nextId });
+});
+
+/** GET /api/loans/me - a logged-in borrower's own loan(s) with full weekly schedule */
+router.get("/me", async (req: AuthRequest, res) => {
+  if (req.user!.role !== "BORROWER") throw new ApiError(403, "Access denied");
+
+  const loans = await prisma.loan.findMany({
+    where: { borrowerId: req.user!.id },
+    include: {
+      member: { select: { id: true, name: true, username: true, phone: true } },
+      payments: { orderBy: { weekNumber: "asc" } },
+      penalties: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const withDates = await Promise.all(loans.map(withPaymentDueDates));
+  res.json({ success: true, data: withDates });
+});
+
 /** GET /api/loans - all loans (admin only), filterable by status */
 router.get("/", requireRole("ADMIN"), async (req, res) => {
   const { status } = req.query as Record<string, string>;
@@ -27,10 +56,16 @@ router.get("/", requireRole("ADMIN"), async (req, res) => {
 
   const loans = await prisma.loan.findMany({
     where: status ? { status: status as any } : {},
-    include: { member: { select: { id: true, name: true, username: true } } },
+    include: {
+      member: { select: { id: true, name: true, username: true } },
+      borrower: { select: { id: true, name: true, username: true, phone: true } },
+      payments: { orderBy: { weekNumber: "asc" } },
+      penalties: true,
+    },
     orderBy: { createdAt: "desc" },
   });
-  res.json({ success: true, data: loans });
+  const withDates = await Promise.all(loans.map(withPaymentDueDates));
+  res.json({ success: true, data: withDates });
 });
 
 /** GET /api/loans/member/:id - a member's loans (self or admin) */
@@ -45,14 +80,18 @@ router.get("/member/:id", requireSelfOrAdmin(), async (req, res) => {
 
   const loans = await prisma.loan.findMany({
     where: { memberId: req.params.id },
-    include: { payments: { orderBy: { weekNumber: "asc" } }, penalties: true },
+    include: {
+      borrower: { select: { id: true, name: true, username: true, phone: true } },
+      payments: { orderBy: { weekNumber: "asc" } },
+      penalties: true,
+    },
     orderBy: { createdAt: "desc" },
   });
   const withDates = await Promise.all(loans.map(withPaymentDueDates));
   res.json({ success: true, data: withDates });
 });
 
-/** GET /api/loans/:id - a single loan with its full EMI payment history (self or admin) */
+/** GET /api/loans/:id - a single loan with its full EMI payment history (self, borrower, or admin) */
 router.get("/:id", async (req: AuthRequest, res) => {
   await applyMissedLoanPenalties(req.params.id);
 
@@ -61,20 +100,28 @@ router.get("/:id", async (req: AuthRequest, res) => {
     include: {
       payments: { orderBy: { weekNumber: "asc" } },
       penalties: { orderBy: { createdAt: "asc" } },
-      member: { select: { id: true, name: true, username: true } },
+      member: { select: { id: true, name: true, username: true, phone: true } },
+      borrower: { select: { id: true, name: true, username: true, phone: true } },
     },
   });
   if (!loan) throw new ApiError(404, "Loan not found");
-  if (req.user!.role !== "ADMIN" && req.user!.id !== loan.memberId) {
+
+  const canView =
+    req.user!.role === "ADMIN" ||
+    (req.user!.role === "MEMBER" && req.user!.id === loan.memberId) ||
+    (req.user!.role === "BORROWER" && req.user!.id === loan.borrowerId);
+
+  if (!canView) {
     throw new ApiError(403, "Access denied");
   }
+
   const withDates = await withPaymentDueDates(loan);
   res.json({ success: true, data: withDates });
 });
 
 /** POST /api/loans - issue a new loan (admin only, payer/standalone members only) */
 router.post("/", requireRole("ADMIN"), async (req: AuthRequest, res) => {
-  const { memberId, principalAmount, interestRate, durationWeeks } = req.body;
+  const { memberId, borrowerType, borrower, principalAmount, interestRate, durationWeeks } = req.body;
   if (!memberId || !principalAmount) throw new ApiError(400, "memberId and principalAmount are required");
 
   const member = await prisma.member.findUnique({ where: { id: memberId }, include: { childRelation: true } });
@@ -83,15 +130,53 @@ router.post("/", requireRole("ADMIN"), async (req: AuthRequest, res) => {
     throw new ApiError(400, "Loans can only be issued to a family payer, not to a linked child member");
   }
 
+  const type = borrowerType === "OUTSIDE" ? "OUTSIDE" : "SELF";
+  let borrowerId: string | null = null;
+  let credentials: { username: string; password: string } | null = null;
+
+  if (type === "OUTSIDE") {
+    if (!borrower?.name) throw new ApiError(400, "Borrower name is required for outside loans");
+
+    let username = borrower.username?.trim();
+    if (!username) {
+      const existingUsernames = await prisma.loanBorrower.findMany({ select: { username: true } });
+      username = nextUsernameFromList(
+        existingUsernames.map((b) => b.username),
+        "LB"
+      );
+    }
+
+    const rawPassword = borrower.password?.trim() || generateRandomPassword();
+    const passwordHash = await hashPassword(rawPassword);
+
+    const existingBorrower = await prisma.loanBorrower.findUnique({ where: { username } });
+    let borrowerRecord;
+    if (existingBorrower) {
+      borrowerRecord = await prisma.loanBorrower.update({
+        where: { id: existingBorrower.id },
+        data: { name: borrower.name, phone: borrower.phone || null, passwordHash },
+      });
+    } else {
+      borrowerRecord = await prisma.loanBorrower.create({
+        data: { username, passwordHash, name: borrower.name, phone: borrower.phone || null },
+      });
+    }
+
+    borrowerId = borrowerRecord.id;
+    credentials = { username, password: rawPassword };
+  }
+
   const settings = await prisma.settings.findFirst();
-  const rate = interestRate ?? Number(settings?.loanInterestRate ?? 10);
-  const duration = durationWeeks ?? settings?.loanDurationWeeks ?? 11;
+  const rate = interestRate !== undefined && interestRate !== "" ? Number(interestRate) : Number(settings?.loanInterestRate ?? 10);
+  const duration = durationWeeks !== undefined && durationWeeks !== "" ? Number(durationWeeks) : (settings?.loanDurationWeeks ?? 11);
 
   const computed = computeLoan({ principalAmount: Number(principalAmount), interestRate: rate, durationWeeks: duration });
 
   const loan = await prisma.loan.create({
     data: {
       memberId,
+      borrowerType: type,
+      borrowerId,
       principalAmount,
       interestRate: rate,
       durationWeeks: duration,
@@ -107,7 +192,11 @@ router.post("/", requireRole("ADMIN"), async (req: AuthRequest, res) => {
         })),
       },
     },
-    include: { payments: true },
+    include: {
+      payments: true,
+      member: { select: { id: true, name: true, username: true } },
+      borrower: { select: { id: true, name: true, username: true, phone: true } },
+    },
   });
 
   await prisma.transaction.create({
@@ -115,27 +204,30 @@ router.post("/", requireRole("ADMIN"), async (req: AuthRequest, res) => {
       memberId,
       type: "LOAN_ISSUE",
       amount: principalAmount,
-      description: `Loan issued: ₹${principalAmount} @ ${rate}% for ${duration} weeks`,
+      description: `Loan issued: ₹${principalAmount} @ ${rate}% for ${duration} weeks ${type === "OUTSIDE" ? `to ${borrower.name}` : "(Self)"}`,
       referenceId: loan.id,
       performedBy: req.user!.id,
     },
   });
 
-  res.status(201).json({ success: true, data: loan });
+  res.status(201).json({ success: true, data: loan, credentials });
 });
 
-/** POST /api/loans/:id/pay-emi - record a weekly EMI payment (admin only) */
-router.post("/:id/pay-emi", requireRole("ADMIN"), async (req: AuthRequest, res) => {
-  const { amount } = req.body;
+/** POST /api/loans/:id/pay-emi - record an EMI payment (admin or borrower) */
+router.post("/:id/pay-emi", async (req: AuthRequest, res) => {
   const loan = await prisma.loan.findUnique({ where: { id: req.params.id }, include: { payments: true } });
   if (!loan) throw new ApiError(404, "Loan not found");
+
+  const canPay = req.user!.role === "ADMIN" || (req.user!.role === "BORROWER" && req.user!.id === loan.borrowerId);
+  if (!canPay) throw new ApiError(403, "Access denied");
 
   const nextPayment = loan.payments.find(
     (p: (typeof loan.payments)[number]) => p.status === "PENDING" || p.status === "MISSED"
   );
   if (!nextPayment) throw new ApiError(400, "No pending EMI for this loan");
 
-  const paid = Number(amount);
+  const { amount } = req.body;
+  const paid = Number(amount || nextPayment.emiDue);
   const status = paid >= Number(nextPayment.emiDue) ? "PAID" : "PARTIAL";
 
   await prisma.loanPayment.update({
@@ -162,7 +254,7 @@ router.post("/:id/pay-emi", requireRole("ADMIN"), async (req: AuthRequest, res) 
       memberId: loan.memberId,
       type: "LOAN_PAYMENT",
       amount: paid,
-      description: `EMI week ${nextPayment.weekNumber} payment`,
+      description: `EMI week ${nextPayment.weekNumber} payment${loan.borrowerType === "OUTSIDE" ? " (Outside Borrower)" : ""}`,
       referenceId: loan.id,
       performedBy: req.user!.id,
     },
@@ -171,10 +263,52 @@ router.post("/:id/pay-emi", requireRole("ADMIN"), async (req: AuthRequest, res) 
   res.json({ success: true, data: updatedLoan });
 });
 
+/** DELETE /api/loans/:id - delete a loan (admin only) */
+router.delete("/:id", requireRole("ADMIN"), async (req, res) => {
+  const loan = await prisma.loan.findUnique({ where: { id: req.params.id } });
+  if (!loan) throw new ApiError(404, "Loan not found");
+
+  // Delete child records first
+  await prisma.loanPayment.deleteMany({ where: { loanId: loan.id } });
+  await prisma.penalty.deleteMany({ where: { loanId: loan.id } });
+  await prisma.transaction.deleteMany({ where: { referenceId: loan.id } });
+
+  await prisma.loan.delete({ where: { id: loan.id } });
+
+  // If outside borrower has no remaining loans anywhere, clean up the login account
+  if (loan.borrowerId) {
+    const [remLoans, remPayerLoans] = await Promise.all([
+      prisma.loan.count({ where: { borrowerId: loan.borrowerId } }),
+      prisma.payerLoan.count({ where: { borrowerId: loan.borrowerId } }),
+    ]);
+    if (remLoans === 0 && remPayerLoans === 0) {
+      await prisma.loanBorrower.delete({ where: { id: loan.borrowerId } });
+    }
+  }
+
+  res.json({ success: true, message: "Loan deleted successfully" });
+});
+
+/** POST /api/loans/:id/reset-borrower-password - reset password for outside borrower (admin only) */
+router.post("/:id/reset-borrower-password", requireRole("ADMIN"), async (req, res) => {
+  const loan = await prisma.loan.findUnique({ where: { id: req.params.id } });
+  if (!loan) throw new ApiError(404, "Loan not found");
+  if (!loan.borrowerId) throw new ApiError(400, "This loan is not assigned to an outside borrower");
+
+  const rawPassword = req.body?.password?.trim() || generateRandomPassword();
+  const passwordHash = await hashPassword(rawPassword);
+
+  const borrower = await prisma.loanBorrower.update({
+    where: { id: loan.borrowerId },
+    data: { passwordHash },
+  });
+
+  res.json({ success: true, credentials: { username: borrower.username, password: rawPassword } });
+});
+
 /**
  * POST /api/loans/:id/apply-missed-penalty
- * Marks the current pending EMI as MISSED and applies a 1% penalty (admin only,
- * or called by a scheduled job — see README for cron setup).
+ * Marks the current pending EMI as MISSED and applies penalty (admin only)
  */
 router.post("/:id/apply-missed-penalty", requireRole("ADMIN"), async (req: AuthRequest, res) => {
   const loan = await prisma.loan.findUnique({ where: { id: req.params.id }, include: { payments: true } });
@@ -217,8 +351,7 @@ router.post("/:id/apply-missed-penalty", requireRole("ADMIN"), async (req: AuthR
 
 /**
  * POST /api/loans/:id/renew
- * If a loan's duration has elapsed with an outstanding balance, renew it:
- * apply fresh interest on the remaining amount and restart the EMI schedule.
+ * Renew loan if duration has elapsed with an outstanding balance
  */
 router.post("/:id/renew", requireRole("ADMIN"), async (req: AuthRequest, res) => {
   const loan = await prisma.loan.findUnique({ where: { id: req.params.id } });
@@ -236,6 +369,8 @@ router.post("/:id/renew", requireRole("ADMIN"), async (req: AuthRequest, res) =>
   const renewedLoan = await prisma.loan.create({
     data: {
       memberId: loan.memberId,
+      borrowerType: loan.borrowerType,
+      borrowerId: loan.borrowerId,
       principalAmount: loan.remainingAmount,
       interestRate: rate,
       durationWeeks: duration,

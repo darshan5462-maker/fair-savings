@@ -213,13 +213,10 @@ router.post("/", requireRole("ADMIN"), async (req: AuthRequest, res) => {
   res.status(201).json({ success: true, data: loan, credentials });
 });
 
-/** POST /api/loans/:id/pay-emi - record an EMI payment (admin or borrower) */
-router.post("/:id/pay-emi", async (req: AuthRequest, res) => {
+/** POST /api/loans/:id/pay-emi - record an EMI payment (admin only) */
+router.post("/:id/pay-emi", requireRole("ADMIN"), async (req: AuthRequest, res) => {
   const loan = await prisma.loan.findUnique({ where: { id: req.params.id }, include: { payments: true } });
   if (!loan) throw new ApiError(404, "Loan not found");
-
-  const canPay = req.user!.role === "ADMIN" || (req.user!.role === "BORROWER" && req.user!.id === loan.borrowerId);
-  if (!canPay) throw new ApiError(403, "Access denied");
 
   const nextPayment = loan.payments.find(
     (p: (typeof loan.payments)[number]) => p.status === "PENDING" || p.status === "MISSED"

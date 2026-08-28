@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
 import { CheckCircleIcon, ClockIcon } from "@heroicons/react/24/outline";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
@@ -44,8 +43,6 @@ export default function BorrowerDashboard() {
   const { user } = useAuth();
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
-  const [payAmount, setPayAmount] = useState<Record<string, number>>({});
-  const [submitting, setSubmitting] = useState<string | null>(null);
 
   function load() {
     setLoading(true);
@@ -75,22 +72,6 @@ export default function BorrowerDashboard() {
   }
 
   useEffect(load, []);
-
-  async function handlePay(loanId: string, defaultEmi?: number) {
-    const amount = payAmount[loanId] || defaultEmi;
-    if (!amount || amount <= 0) return toast.error("Enter an amount");
-    setSubmitting(loanId);
-    try {
-      await api.post(`/loans/${loanId}/pay-emi`, { amount });
-      toast.success("Payment recorded successfully");
-      setPayAmount((prev) => ({ ...prev, [loanId]: 0 }));
-      load();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.message || "Payment failed");
-    } finally {
-      setSubmitting(null);
-    }
-  }
 
   if (loading) {
     return (
@@ -154,25 +135,6 @@ export default function BorrowerDashboard() {
               <span>Paid: ₹{loan.paidAmount}</span>
               <span>Remaining: ₹{loan.remainingAmount}</span>
             </div>
-
-            {(loan.status === "ACTIVE" || loan.status === "RENEWED") && (
-              <div className="mb-6 flex gap-2 rounded-xl bg-ink-900/5 p-3 dark:bg-white/5">
-                <input
-                  type="number"
-                  placeholder={`Amount (EMI ₹${loan.weeklyEmi || loan.remainingAmount})`}
-                  className="input-field"
-                  value={payAmount[loan.id] || ""}
-                  onChange={(e) => setPayAmount((prev) => ({ ...prev, [loan.id]: Number(e.target.value) }))}
-                />
-                <button
-                  onClick={() => handlePay(loan.id, loan.weeklyEmi)}
-                  disabled={submitting === loan.id}
-                  className="btn-primary shrink-0 text-xs"
-                >
-                  {submitting === loan.id ? "Processing..." : `Pay ₹${payAmount[loan.id] || loan.weeklyEmi || "EMI"}`}
-                </button>
-              </div>
-            )}
 
             <div className="mb-3 flex items-center justify-between">
               <h3 className="flex items-center gap-1.5 text-sm font-semibold">

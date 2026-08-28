@@ -143,9 +143,17 @@ export default function LoginPage() {
             {submitting ? `${t("loading")}` : t("loginButton")}
           </button>
 
-          <p className="mt-6 text-center text-xs text-ink-500 dark:text-ink-300">
-            Demo — Admin: admin / Admin@123 &nbsp;·&nbsp; Member: KD001 / Member@123
-          </p>
+          <div className="mt-8 border-t border-ink-900/5 pt-4 text-center text-xs text-ink-500 dark:border-white/5 dark:text-ink-400">
+            Developed by{" "}
+            <a
+              href="https://darshan-portfolio-ds.vercel.app/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-brand-600 transition-colors hover:underline dark:text-brand-400"
+            >
+              Darshan M
+            </a>
+          </div>
         </motion.form>
       </div>
     </div>

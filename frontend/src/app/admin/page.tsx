@@ -11,6 +11,7 @@ import {
   ExclamationTriangleIcon,
   TrophyIcon,
   ReceiptPercentIcon,
+  CurrencyRupeeIcon,
 } from "@heroicons/react/24/outline";
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { Navbar } from "@/components/Navbar";
@@ -26,6 +27,7 @@ interface DashboardData {
     pendingCollections: number;
     totalSavings: number;
     totalLoanAmount: number;
+    currentAmount: number;
     totalInterest: number;
     totalFines: number;
     defaulters: number;
@@ -41,6 +43,9 @@ interface DashboardData {
 const PIE_COLORS = ["#7C5CF5", "#3B82F6", "#17B26A", "#F04438"];
 
 function currency(n: number) {
+  if (n < 0) {
+    return `-₹${Math.abs(n).toLocaleString("en-IN")}`;
+  }
   return `₹${n.toLocaleString("en-IN")}`;
 }
 
@@ -63,7 +68,7 @@ export default function AdminDashboard() {
       <main className="space-y-6 p-6">
         {loading ? (
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-            {Array.from({ length: 10 }).map((_, i) => (
+            {Array.from({ length: 11 }).map((_, i) => (
               <div key={i} className="skeleton h-28 rounded-xl2" />
             ))}
           </div>
@@ -74,7 +79,14 @@ export default function AdminDashboard() {
             <StatCard label={t("activeLoans")} value={data?.cards.activeLoans ?? 0} icon={CreditCardIcon} tone="brand" delay={0.1} />
             <StatCard label={t("pendingCollections")} value={data?.cards.pendingCollections ?? 0} icon={ClockIcon} tone="warning" delay={0.15} />
             <StatCard label={t("totalSavings")} value={currency(data?.cards.totalSavings ?? 0)} icon={WalletIcon} tone="success" delay={0.2} />
-            <StatCard label={t("totalLoanAmount")} value={currency(data?.cards.totalLoanAmount ?? 0)} icon={ScaleIcon} tone="brand" delay={0.25} />
+            <StatCard label={t("totalLoanAmount")} value={currency(data?.cards.totalLoanAmount ?? 0)} icon={ScaleIcon} tone="brand" delay={0.23} />
+            <StatCard
+              label={t("currentAmount")}
+              value={currency(data?.cards.currentAmount ?? 0)}
+              icon={CurrencyRupeeIcon}
+              tone={(data?.cards.currentAmount ?? 0) >= 0 ? "success" : "danger"}
+              delay={0.26}
+            />
             <StatCard label="Total Interest" value={currency(data?.cards.totalInterest ?? 0)} icon={ReceiptPercentIcon} tone="brand" delay={0.28} />
             <StatCard label="Total Fines" value={currency(data?.cards.totalFines ?? 0)} icon={ExclamationTriangleIcon} tone="danger" delay={0.3} />
             <StatCard label={t("defaulters")} value={data?.cards.defaulters ?? 0} icon={ExclamationTriangleIcon} tone="danger" delay={0.32} />

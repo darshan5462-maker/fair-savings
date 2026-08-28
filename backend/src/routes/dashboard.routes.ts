@@ -24,9 +24,11 @@ router.get("/admin", requireRole("ADMIN"), async (_req, res) => {
     todaysCollectionAgg,
     totalSavingsAgg,
     totalLoanAgg,
+    totalLoanPaidAgg,
     totalFinesAgg,
     allLoansForInterest,
     pendingCollections,
+    totalSettlementsAgg,
   ] = await Promise.all([
     // "Considerable" members: children (who are individually tracked savers)
     // plus standalone members who pay for themselves. A payer who has
@@ -42,10 +44,22 @@ router.get("/admin", requireRole("ADMIN"), async (_req, res) => {
     }),
     prisma.savings.aggregate({ _sum: { totalPaid: true } }),
     prisma.loan.aggregate({ _sum: { principalAmount: true } }),
-    prisma.penalty.aggregate({ _sum: { amount: true } }),
+    prisma.loan.aggregate({ _sum: { paidAmount: true } }),
+    prisma.penalty.aggregate({ where: { isPaid: true }, _sum: { amount: true } }),
     prisma.loan.findMany({ select: { principalAmount: true, totalRepayment: true } }),
     prisma.weeklyCollection.count({ where: { status: "PENDING" } }),
+    prisma.savings.aggregate({ where: { isSettled: true }, _sum: { settlementAmount: true } }),
   ]);
+
+  const totalSavings = Number(totalSavingsAgg._sum.totalPaid ?? 0);
+  const totalLoanDisbursed = Number(totalLoanAgg._sum.principalAmount ?? 0);
+  const totalLoanRepaid = Number(totalLoanPaidAgg._sum.paidAmount ?? 0);
+  const totalFinesPaid = Number(totalFinesAgg._sum.amount ?? 0);
+  const totalSettlements = Number(totalSettlementsAgg._sum.settlementAmount ?? 0);
+
+  // Cash in Hand / Current Fund Balance:
+  // Inflows (savings + loan repayments + fines) minus Outflows (loan principal disbursed + settlements)
+  const currentAmount = totalSavings + totalLoanRepaid + totalFinesPaid - totalLoanDisbursed - totalSettlements;
 
   // Interest is fixed at issuance (simple interest): totalRepayment - principalAmount,
   // summed across every loan ever issued.
@@ -85,10 +99,11 @@ router.get("/admin", requireRole("ADMIN"), async (_req, res) => {
         todaysCollection: Number(todaysCollectionAgg._sum.amountPaid ?? 0),
         activeLoans,
         pendingCollections,
-        totalSavings: Number(totalSavingsAgg._sum.totalPaid ?? 0),
-        totalLoanAmount: Number(totalLoanAgg._sum.principalAmount ?? 0),
+        totalSavings,
+        totalLoanAmount: totalLoanDisbursed,
+        currentAmount: Math.round(currentAmount * 100) / 100,
         totalInterest: Math.round(totalInterest * 100) / 100,
-        totalFines: Number(totalFinesAgg._sum.amount ?? 0),
+        totalFines: totalFinesPaid,
         defaulters,
         completedMembers,
       },

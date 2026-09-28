@@ -19,6 +19,15 @@ import { collectionDueDate, loanPaymentDueDate, computePenalty, resolveSavingsSt
  * admin dashboard slow to open.
  */
 
+export async function recomputeDefaulterStatus(memberId: string) {
+  const missedSavings = await prisma.weeklyCollection.count({ where: { memberId, status: "MISSED" } });
+  const missedLoan = await prisma.loanPayment.count({ where: { status: "MISSED", loan: { memberId } } });
+  await prisma.member.update({
+    where: { id: memberId },
+    data: { isDefaulter: missedSavings > 0 || missedLoan > 0 },
+  });
+}
+
 type SettingsRow = {
   collectionDay: string;
   penaltyRate: any;
@@ -72,7 +81,7 @@ export async function applyMissedSavingsPenalties(memberId: string, settings?: S
       data: { memberId, weekNumber: week, amountDue, amountPaid: 0, status: "MISSED" },
     });
 
-    const penaltyAmount = computePenalty(amountDue, penaltyRate);
+    const penaltyAmount = 10; // Flat ₹10 fine for missed savings per member
     const penalty = await prisma.penalty.create({
       data: { memberId, reason: `Missed savings - week ${week}`, amount: penaltyAmount },
     });
@@ -83,7 +92,7 @@ export async function applyMissedSavingsPenalties(memberId: string, settings?: S
         memberId,
         type: "PENALTY",
         amount: penaltyAmount,
-        description: `${penaltyRate}% penalty for missed savings week ${week}`,
+        description: `₹10 penalty for missed savings week ${week}`,
         referenceId: penalty.id,
         performedBy: "SYSTEM",
       },

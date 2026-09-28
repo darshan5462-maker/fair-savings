@@ -81,8 +81,9 @@ export default function SettingsPage() {
               <input type="number" className="input-field" value={settings.loanInterestRate} onChange={(e) => setSettings({ ...settings, loanInterestRate: Number(e.target.value) })} />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-semibold uppercase text-ink-500">Penalty %</label>
+              <label className="mb-1 block text-xs font-semibold uppercase text-ink-500">Loan Penalty %</label>
               <input type="number" className="input-field" value={settings.penaltyRate} onChange={(e) => setSettings({ ...settings, penaltyRate: Number(e.target.value) })} />
+              <p className="mt-1 text-xs text-ink-500 leading-tight">Fine for missed loan EMIs. Savings fine is flat ₹10.</p>
             </div>
           </div>
           <div>

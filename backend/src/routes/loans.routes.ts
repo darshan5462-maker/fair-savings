@@ -3,7 +3,7 @@ import { prisma } from "../config/prisma";
 import { authenticate, requireRole, requireSelfOrAdmin, AuthRequest } from "../middleware/auth";
 import { ApiError } from "../middleware/errorHandler";
 import { computeLoan, computePenalty, computeRenewal, round2, loanPaymentDueDate } from "../utils/finance";
-import { applyMissedLoanPenaltiesForAllLoans, applyMissedLoanPenalties } from "../utils/penaltyEngine";
+import { applyMissedLoanPenaltiesForAllLoans, applyMissedLoanPenalties, recomputeDefaulterStatus } from "../utils/penaltyEngine";
 import { generateRandomPassword, hashPassword, nextUsernameFromList } from "../utils/auth";
 
 const router = Router();
@@ -257,6 +257,8 @@ router.post("/:id/pay-emi", requireRole("ADMIN"), async (req: AuthRequest, res) 
     },
   });
 
+  await recomputeDefaulterStatus(loan.memberId);
+
   res.json({ success: true, data: updatedLoan });
 });
 
@@ -337,7 +339,7 @@ router.post("/:id/apply-missed-penalty", requireRole("ADMIN"), async (req: AuthR
       memberId: loan.memberId,
       type: "PENALTY",
       amount: penaltyAmount,
-      description: `1% penalty for missed EMI week ${overdue.weekNumber}`,
+      description: `${penaltyRate}% penalty for missed EMI week ${overdue.weekNumber}`,
       referenceId: penalty.id,
       performedBy: req.user!.id,
     },

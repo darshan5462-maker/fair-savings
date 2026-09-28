@@ -3,7 +3,7 @@ import { prisma } from "../config/prisma";
 import { authenticate, requireRole, requireSelfOrAdmin, AuthRequest } from "../middleware/auth";
 import { ApiError } from "../middleware/errorHandler";
 import { savingsProgress, collectionDueDate, resolveSavingsStartDate } from "../utils/finance";
-import { applyMissedSavingsPenalties } from "../utils/penaltyEngine";
+import { applyMissedSavingsPenalties, recomputeDefaulterStatus } from "../utils/penaltyEngine";
 
 const router = Router();
 router.use(authenticate);
@@ -211,6 +211,8 @@ async function recordWeeklyPayment(memberId: string, amount: number, adminId: st
       performedBy: adminId,
     },
   });
+
+  await recomputeDefaulterStatus(memberId);
 
   const savings = await prisma.savings.findUnique({ where: { memberId } });
   return { ...collection, progress: savingsProgress(savings?.weeksCompleted ?? 0, member.savingsCycleWeeks) };

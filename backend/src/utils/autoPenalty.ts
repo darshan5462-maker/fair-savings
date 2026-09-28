@@ -46,7 +46,7 @@ export async function checkAndApplyMissedLoanPayments(loanId: string) {
         memberId: loan.memberId,
         type: "PENALTY",
         amount: penaltyAmount,
-        description: `1% penalty for missed EMI week ${payment.weekNumber} (auto-applied)`,
+        description: `${penaltyRate}% penalty for missed EMI week ${payment.weekNumber} (auto-applied)`,
         referenceId: penalty.id,
         performedBy: "SYSTEM",
       },
@@ -94,7 +94,7 @@ export async function checkAndApplyMissedSavings(memberId: string) {
       },
     });
 
-    const penaltyAmount = computePenalty(Number(member.weeklyAmount), penaltyRate);
+    const penaltyAmount = 10;
     const penalty = await prisma.penalty.create({
       data: {
         memberId,
@@ -110,7 +110,7 @@ export async function checkAndApplyMissedSavings(memberId: string) {
         memberId,
         type: "PENALTY",
         amount: penaltyAmount,
-        description: `1% penalty for missed week ${week} savings (auto-applied)`,
+        description: `₹10 penalty for missed week ${week} savings (auto-applied)`,
         referenceId: penalty.id,
         performedBy: "SYSTEM",
       },

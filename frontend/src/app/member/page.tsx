@@ -107,10 +107,19 @@ export default function MemberDashboard() {
   const fine = data?.penalties.reduce((s, p) => s + Number(p.amount), 0) ?? 0;
   const upcoming = schedule.filter((s) => s.status !== "PAID").slice(0, 4);
 
-  // Family (payer) rollup numbers - combined across all linked children
-  const familyTotalSavings = children.reduce((s, c) => s + Number(c.savings?.totalPaid ?? 0), 0);
-  const familyLoanBalance = children.reduce((s, c) => s + c.loans.reduce((ls, l) => ls + Number(l.remainingAmount), 0), 0);
-  const familyFine = children.reduce((s, c) => s + c.penalties.reduce((fs, p) => fs + Number(p.amount), 0), 0);
+  // Family (payer) rollup numbers - combined across payer and all linked children
+  const payerSavings = Number(data?.savings?.totalPaid ?? 0);
+  const childrenSavings = children.reduce((s, c) => s + Number(c.savings?.totalPaid ?? 0), 0);
+  const familyTotalSavings = payerSavings + childrenSavings;
+
+  const payerLoanBalance = data?.loans?.reduce((s, l) => s + Number(l.remainingAmount), 0) ?? 0;
+  const childrenLoanBalance = children.reduce((s, c) => s + (c.loans || []).reduce((ls, l) => ls + Number(l.remainingAmount), 0), 0);
+  const familyLoanBalance = payerLoanBalance + childrenLoanBalance;
+
+  const payerFine = data?.penalties?.reduce((s, p) => s + Number(p.amount), 0) ?? 0;
+  const childrenFine = children.reduce((s, c) => s + (c.penalties || []).reduce((fs, p) => fs + Number(p.amount), 0), 0);
+  const familyFine = payerFine + childrenFine;
+
   // The family's cycle isn't done until its last-finishing child is done.
   const familyRemainingWeeks = children.length > 0 ? Math.max(...children.map((c) => c.savings?.weeksRemaining ?? c.savingsCycleWeeks)) : 0;
   // The family's current week number, for labeling upcoming dates - based on
@@ -138,6 +147,35 @@ export default function MemberDashboard() {
             <div className="glass-card p-6">
               <h3 className="mb-4 font-display font-semibold">Family Members</h3>
               <div className="space-y-4">
+                {(payerLoanBalance > 0 || payerFine > 0) && (
+                  <div className="rounded-xl border border-brand-500/20 bg-brand-50/20 p-4 dark:border-brand-500/30 dark:bg-brand-900/10">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2 font-medium">
+                          {data?.name}
+                          <span className="rounded-full bg-brand-100 px-2 py-0.5 text-[10px] font-bold text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">
+                            Payer / Family Head
+                          </span>
+                        </div>
+                        <div className="font-mono text-xs text-ink-500">{data?.username}</div>
+                      </div>
+                      <div className="flex gap-4 text-sm">
+                        {payerLoanBalance > 0 && (
+                          <div>
+                            <span className="text-ink-500">Loan: </span>
+                            <span className="font-semibold">₹{payerLoanBalance}</span>
+                          </div>
+                        )}
+                        {payerFine > 0 && (
+                          <div>
+                            <span className="text-danger">Fine: </span>
+                            <span className="font-semibold text-danger">₹{payerFine}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {children.map((child) => {
                   const childProgress = child.savings
                     ? Math.min(100, Math.round((child.savings.weeksCompleted / child.savingsCycleWeeks) * 100))

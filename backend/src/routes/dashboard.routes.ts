@@ -1,7 +1,12 @@
 import { Router } from "express";
 import { prisma } from "../config/prisma";
 import { authenticate, requireRole, requireSelfOrAdmin } from "../middleware/auth";
-import { applyMissedSavingsPenaltiesForAllMembers, applyMissedLoanPenaltiesForAllLoans, applyMissedSavingsPenalties } from "../utils/penaltyEngine";
+import {
+  applyMissedSavingsPenaltiesForAllMembers,
+  applyMissedLoanPenaltiesForAllLoans,
+  applyMissedSavingsPenalties,
+  applyMissedLoanPenalties,
+} from "../utils/penaltyEngine";
 
 const router = Router();
 router.use(authenticate);
@@ -122,7 +127,36 @@ router.get("/admin", requireRole("ADMIN"), async (_req, res) => {
 
 /** GET /api/dashboard/member/:id - self summary card data */
 router.get("/member/:id", requireSelfOrAdmin(), async (req, res) => {
-  await applyMissedSavingsPenalties(req.params.id);
+  // Sweep for missed savings and loans for this member and any linked children
+  const memberToCheck = await prisma.member.findUnique({
+    where: { id: req.params.id },
+    include: {
+      loans: { where: { status: { in: ["ACTIVE", "RENEWED"] } }, select: { id: true } },
+      payerRelations: {
+        include: {
+          child: {
+            include: {
+              loans: { where: { status: { in: ["ACTIVE", "RENEWED"] } }, select: { id: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (memberToCheck) {
+    const sweeps: Promise<any>[] = [
+      applyMissedSavingsPenalties(memberToCheck.id),
+      ...memberToCheck.loans.map((l: { id: string }) => applyMissedLoanPenalties(l.id)),
+    ];
+    for (const rel of memberToCheck.payerRelations) {
+      sweeps.push(applyMissedSavingsPenalties(rel.child.id));
+      for (const cl of rel.child.loans) {
+        sweeps.push(applyMissedLoanPenalties(cl.id));
+      }
+    }
+    await Promise.all(sweeps);
+  }
 
   const member = await prisma.member.findUnique({
     where: { id: req.params.id },

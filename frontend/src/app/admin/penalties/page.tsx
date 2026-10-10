@@ -34,8 +34,12 @@ export default function PenaltiesPage() {
     setLoading(true);
     Promise.all([api.get("/penalties"), api.get("/members")])
       .then(([pRes, mRes]) => {
-        setPenalties(pRes.data.data);
-        setMembers(mRes.data.data);
+        setPenalties(pRes.data?.data || []);
+        setMembers(mRes.data?.data || []);
+      })
+      .catch((err) => {
+        console.error("Error loading penalties:", err);
+        toast.error("Failed to load penalties");
       })
       .finally(() => setLoading(false));
   }
@@ -53,6 +57,16 @@ export default function PenaltiesPage() {
     setSelected(p);
     setForm({ memberId: p.memberId, reason: p.reason, amount: p.amount.toString(), isPaid: p.isPaid });
     setModalMode("EDIT");
+  }
+
+  async function handleQuickPay(p: Penalty) {
+    try {
+      await api.put(`/penalties/${p.id}`, { isPaid: true });
+      toast.success(`Marked penalty for ${p.member?.name ?? "member"} as paid`);
+      load();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || "Error marking penalty as paid");
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -86,11 +100,35 @@ export default function PenaltiesPage() {
     }
   }
 
+  const totalAmount = penalties.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  const pendingAmount = penalties.filter((p) => !p.isPaid).reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  const paidAmount = penalties.filter((p) => p.isPaid).reduce((sum, p) => sum + Number(p.amount || 0), 0);
+
   return (
     <>
       <Navbar title={t("penalties")} />
       <main className="p-6">
-        <div className="mb-6 flex items-center justify-end">
+        {/* Summary Stat Cards */}
+        <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="glass-card p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-ink-500">Total Penalties</p>
+            <p className="mt-1 font-display text-2xl font-bold text-danger">₹{totalAmount.toLocaleString()}</p>
+            <p className="mt-0.5 text-xs text-ink-400">{penalties.length} total records</p>
+          </div>
+          <div className="glass-card p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-ink-500">Pending Fines</p>
+            <p className="mt-1 font-display text-2xl font-bold text-warning">₹{pendingAmount.toLocaleString()}</p>
+            <p className="mt-0.5 text-xs text-ink-400">{penalties.filter((p) => !p.isPaid).length} unpaid</p>
+          </div>
+          <div className="glass-card p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-ink-500">Collected Fines</p>
+            <p className="mt-1 font-display text-2xl font-bold text-success">₹{paidAmount.toLocaleString()}</p>
+            <p className="mt-0.5 text-xs text-ink-400">{penalties.filter((p) => p.isPaid).length} paid</p>
+          </div>
+        </div>
+
+        <div className="mb-6 flex items-center justify-between">
+          <h2 className="font-display text-lg font-bold">Penalties Ledger</h2>
           <button onClick={openAdd} className="btn-primary flex items-center gap-2">
             <PlusIcon className="h-5 w-5" />
             Add Penalty
@@ -101,6 +139,7 @@ export default function PenaltiesPage() {
           <table className="w-full text-sm">
             <thead className="bg-ink-900/5 text-left text-xs uppercase tracking-wide text-ink-500 dark:bg-white/5 dark:text-ink-300">
               <tr>
+                <th className="px-4 py-3">Date</th>
                 <th className="px-4 py-3">{t("name")}</th>
                 <th className="px-4 py-3">Reason</th>
                 <th className="px-4 py-3">Amount</th>
@@ -111,14 +150,14 @@ export default function PenaltiesPage() {
             <tbody>
               {loading && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-3">
+                  <td colSpan={6} className="px-4 py-3">
                     <div className="skeleton h-5 w-full" />
                   </td>
                 </tr>
               )}
               {!loading && penalties.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-ink-500">
+                  <td colSpan={6} className="px-4 py-10 text-center text-ink-500">
                     {t("noDataFound")}
                   </td>
                 </tr>
@@ -126,20 +165,32 @@ export default function PenaltiesPage() {
               {!loading &&
                 penalties.map((p) => (
                   <tr key={p.id} className="border-t border-ink-900/5 dark:border-white/5">
+                    <td className="px-4 py-3 text-ink-400 text-xs">
+                      {p.createdAt ? new Date(p.createdAt).toLocaleDateString() : "-"}
+                    </td>
                     <td className="px-4 py-3 font-medium">{p.member?.name ?? "-"}</td>
                     <td className="px-4 py-3 text-ink-500">{p.reason}</td>
-                    <td className="px-4 py-3 tabular-nums">₹{p.amount}</td>
+                    <td className="px-4 py-3 tabular-nums font-semibold">₹{p.amount}</td>
                     <td className="px-4 py-3">
                       <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${p.isPaid ? "bg-success/10 text-success" : "bg-warning/10 text-warning"}`}>
                         {p.isPaid ? "Paid" : "Pending"}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button onClick={() => openEdit(p)} className="p-1.5 text-brand-500 hover:bg-brand-50 rounded-lg dark:hover:bg-brand-900/30 transition-colors">
+                      <div className="flex justify-end items-center gap-1.5">
+                        {!p.isPaid && (
+                          <button
+                            onClick={() => handleQuickPay(p)}
+                            className="px-2 py-1 text-xs font-medium text-success hover:bg-success/10 rounded-lg transition-colors border border-success/30"
+                            title="Mark as Paid"
+                          >
+                            Mark Paid
+                          </button>
+                        )}
+                        <button onClick={() => openEdit(p)} className="p-1.5 text-brand-500 hover:bg-brand-50 rounded-lg dark:hover:bg-brand-900/30 transition-colors" title="Edit">
                           <PencilIcon className="h-4 w-4" />
                         </button>
-                        <button onClick={() => handleDelete(p.id)} className="p-1.5 text-danger hover:bg-danger/10 rounded-lg transition-colors">
+                        <button onClick={() => handleDelete(p.id)} className="p-1.5 text-danger hover:bg-danger/10 rounded-lg transition-colors" title="Delete">
                           <TrashIcon className="h-4 w-4" />
                         </button>
                       </div>

@@ -1,13 +1,18 @@
 import { Router } from "express";
 import { prisma } from "../config/prisma";
-import { authenticate, requireRole } from "../middleware/auth";
+import { authenticate, requireRole, AuthRequest } from "../middleware/auth";
 import { ApiError } from "../middleware/errorHandler";
+import { applyMissedSavingsPenaltiesForAllMembers, applyMissedLoanPenaltiesForAllLoans } from "../utils/penaltyEngine";
 
 const router = Router();
 router.use(authenticate);
 
 /** GET /api/penalties - List all penalties */
-router.get("/", requireRole("ADMIN"), async (req, res) => {
+router.get("/", requireRole("ADMIN"), async (_req, res) => {
+  // Sweep for any overdue unpaid weeks across the whole system first,
+  // so all auto-penalties exist in the database and appear in this list
+  await Promise.all([applyMissedSavingsPenaltiesForAllMembers(), applyMissedLoanPenaltiesForAllLoans()]);
+
   const penalties = await prisma.penalty.findMany({
     orderBy: { createdAt: "desc" },
     include: { member: { select: { id: true, name: true, username: true } } },
@@ -16,7 +21,7 @@ router.get("/", requireRole("ADMIN"), async (req, res) => {
 });
 
 /** POST /api/penalties - Create a manual penalty */
-router.post("/", requireRole("ADMIN"), async (req, res) => {
+router.post("/", requireRole("ADMIN"), async (req: AuthRequest, res) => {
   const { memberId, reason, amount } = req.body;
   if (!memberId || !reason || amount == null) throw new ApiError(400, "Missing required fields");
 
@@ -34,7 +39,7 @@ router.post("/", requireRole("ADMIN"), async (req, res) => {
       amount: Number(amount),
       description: `Manual penalty: ${reason}`,
       referenceId: penalty.id,
-      performedBy: req.user!.id,
+      performedBy: req.user?.id || "ADMIN",
     },
   });
 
@@ -42,7 +47,7 @@ router.post("/", requireRole("ADMIN"), async (req, res) => {
 });
 
 /** PUT /api/penalties/:id - Edit a penalty */
-router.put("/:id", requireRole("ADMIN"), async (req, res) => {
+router.put("/:id", requireRole("ADMIN"), async (req: AuthRequest, res) => {
   const { reason, amount, isPaid } = req.body;
   const existing = await prisma.penalty.findUnique({ where: { id: req.params.id } });
   if (!existing) throw new ApiError(404, "Penalty not found");
@@ -77,11 +82,11 @@ router.put("/:id", requireRole("ADMIN"), async (req, res) => {
     await prisma.transaction.create({
       data: {
         memberId: penalty.memberId,
-        type: "PENALTY_PAYMENT",
-        amount: existing.amount,
+        type: "ADMIN_CHANGE",
+        amount: Number(existing.amount),
         description: `Paid penalty: ${penalty.reason}`,
         referenceId: penalty.id,
-        performedBy: req.user!.id,
+        performedBy: req.user?.id || "ADMIN",
       },
     });
   }
@@ -90,7 +95,7 @@ router.put("/:id", requireRole("ADMIN"), async (req, res) => {
 });
 
 /** DELETE /api/penalties/:id - Delete a penalty */
-router.delete("/:id", requireRole("ADMIN"), async (req, res) => {
+router.delete("/:id", requireRole("ADMIN"), async (req: AuthRequest, res) => {
   const penalty = await prisma.penalty.findUnique({ where: { id: req.params.id } });
   if (!penalty) throw new ApiError(404, "Penalty not found");
 
